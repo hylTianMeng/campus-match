@@ -520,6 +520,27 @@ textarea {
 .field .error {
   color: var(--red);
 }
+.extra-fields {
+  margin-top: 18px;
+}
+.extra-grid {
+  display: grid;
+  gap: 18px;
+  margin-top: 18px;
+}
+.extra-item {
+  border-left: 3px solid var(--p);
+  padding-left: 14px;
+}
+.extra-item strong {
+  display: block;
+  margin-bottom: 3px;
+}
+.extra-item p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+}
 .formgrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
