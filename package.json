@@ -1,0 +1,11 @@
+{
+  "name": "campuscrew-static",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CampusCrew 清华风格静态前端原型",
+  "scripts": {
+    "start": "node server.mjs",
+    "check": "node --check app.js && node --check server.mjs",
+    "test": "node --test tests/prototype.test.mjs"
+  }
+}
