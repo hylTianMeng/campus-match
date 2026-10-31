@@ -1,0 +1,24 @@
+# Python
+backend/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# 环境变量（含密钥，不提交）
+backend/.env
+.env
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# IDE / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 中间产物 / 工作文件（不提交）
+_reference/
+_template/
+output/

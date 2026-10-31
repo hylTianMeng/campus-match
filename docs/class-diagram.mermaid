@@ -1,0 +1,290 @@
+%% CampusCrew 类图（数据模型 + 核心服务）
+%% 说明：属性类型为 Python/通用标注；仅列关键字段与方法（不含全部 getter/setter）。
+
+classDiagram
+    direction LR
+
+    class User {
+        +int id
+        +str email
+        +str password_hash
+        +str nickname
+        +str avatar_url
+        +str department
+        +str grade
+        +str bio
+        +bool is_verified
+        +str status  // active | banned | deleted
+        +bool searchable
+        +bool show_my_recruitments
+        +bool show_my_applications
+        +bool show_my_teams
+        +int token_version
+        +datetime deleted_at
+    }
+
+    class Category {
+        +int id
+        +str name
+        +int sort_order
+    }
+
+    class Tag {
+        +int id
+        +str name
+        +str kind  // skill | interest | recruitment
+        +bool is_active
+        +int created_by
+    }
+
+    class Recruitment {
+        +int id
+        +int owner_id
+        +int category_id
+        +str title
+        +str description
+        +str location
+        +str activity_time
+        +datetime deadline_at
+        +str status  // draft | open | ended
+        +str end_reason  // filled | expired | manual
+        +datetime ended_at
+        +datetime published_at
+        +bool is_taken_down
+        +str taken_down_reason
+    }
+
+    class Position {
+        +int id
+        +int recruitment_id
+        +str name
+        +int capacity
+        +str description
+        +int sort_order
+    }
+
+    class Application {
+        +int id
+        +int recruitment_id
+        +int position_id
+        +int applicant_id
+        +str message
+        +str status  // pending | accepted | not_passed | withdrawn | expired
+        +str reason  // submitted | approved | rejected | ... | offer_abandoned
+        +datetime decided_at
+    }
+
+    class ApplicationHistory {
+        +int id
+        +int application_id
+        +str from_status
+        +str to_status
+        +str reason
+        +int operator_id
+    }
+
+    class Favorite {
+        +int id
+        +int user_id
+        +int recruitment_id
+    }
+
+    class Blacklist {
+        +int id
+        +int blocker_id
+        +int blocked_id
+    }
+
+    class Conversation {
+        +int id
+        +int user_a_id
+        +int user_b_id
+    }
+
+    class ConversationParticipant {
+        +int id
+        +int conversation_id
+        +int user_id
+        +int last_read_message_id
+        +bool is_hidden
+    }
+
+    class Message {
+        +int id
+        +int conversation_id
+        +int sender_id
+        +str content
+    }
+
+    class MessageDelete {
+        +int id
+        +int message_id
+        +int user_id
+    }
+
+    class Notification {
+        +int id
+        +int recipient_id
+        +str event_type
+        +str summary
+        +str resource_type
+        +int resource_id
+        +str link
+        +bool is_read
+        +str dedup_key
+    }
+
+    class Report {
+        +int id
+        +int reporter_id
+        +str target_type  // recruitment | user | message
+        +int target_id
+        +str reason
+        +json evidence_snapshot
+        +str status  // pending | resolved | dismissed
+        +int resolved_by
+    }
+
+    class AdminAuditLog {
+        +int id
+        +int operator_id
+        +str action
+        +str target_type
+        +int target_id
+        +str reason
+        +json before_state
+        +json after_state
+    }
+
+    class PrivateMessageAccessAudit {
+        +int id
+        +int admin_id
+        +int conversation_id
+        +str reason
+        +str request_id
+    }
+
+    class EmailVerificationCode {
+        +int id
+        +str email
+        +str code_hash
+        +str purpose
+        +datetime expires_at
+        +int attempts
+    }
+
+    %% ================= 核心服务类 =================
+
+    class AuthService {
+        +register(email, password, nickname) User
+        +login(email, password) TokenPair
+        +refresh(refresh_token) TokenPair
+        +logout(user_id) void
+        +send_verification_code(email, purpose) void
+        +confirm_verification(user_id, code) User
+        +reset_password(email, code, new_password) void
+    }
+
+    class RecruitmentService {
+        +create_draft(owner, payload) Recruitment
+        +publish(owner, recruitment_id) Recruitment
+        +update_general(owner, recruitment_id, payload) Recruitment
+        +conditional_delete(owner, recruitment_id) void
+        +end_manually(owner, recruitment_id) Recruitment
+        +check_expiry(recruitment_id) Recruitment
+        +apply_restrictions(recruitment) bool
+    }
+
+    class ApplicationService {
+        +submit(applicant, position_id, message) Application
+        +approve(owner, application_id) Application
+        +reject(owner, application_id) Application
+        +withdraw(applicant, application_id) Application
+        +abandon(applicant, application_id) Application
+        +revoke_offer(owner, application_id) Application
+        +_serialize_recruitment(recruitment_id) Recruitment
+    }
+
+    class MessageService {
+        +send(sender, receiver, content) Message
+        +get_or_create_conversation(a, b) Conversation
+        +list_conversations(user) list
+        +list_messages(user, conversation_id, cursor) list
+        +mark_read(user, conversation_id) void
+        +delete_for_self(user, message_id) void
+        +hide_conversation(user, conversation_id) void
+        +poll(user, after_id) PollResult
+    }
+
+    class NotificationService {
+        +emit(event_type, recipient_id, summary, resource, dedup) void
+        +list(user, cursor) list
+        +unread_count(user) int
+        +mark_read(user, ids) void
+    }
+
+    class ModerationService {
+        +ban_user(admin, user_id, reason) void
+        +unban_user(admin, user_id) void
+        +takedown(admin, recruitment_id, reason) void
+        +restore(admin, recruitment_id) void
+        +resolve_report(admin, report_id, resolution, action) void
+        +merge_tags(admin, src_tag_id, dst_tag_id) void
+        +access_conversation(admin, conversation_id, reason) request_id
+    }
+
+    class DeletionService {
+        +delete_account(user, confirmation) void
+        +anonymize_user(user) void
+    }
+
+    class SearchService {
+        +search_recruitments(filters, page) Page
+        +search_users(keyword, tags, page) Page
+    }
+
+    class PermissionGuard {
+        +get_current_user(token) User
+        +require_verified(user) User
+        +require_active(user) User
+        +require_admin(user) User
+        +require_recruitment_owner(user, recruitment_id) void
+        +require_application_owner(user, application_id) void
+    }
+
+    %% ================= 关系 =================
+
+    User "1" --> "*" Recruitment : owner
+    User "1" --> "*" Application : applicant
+    User "1" --> "*" Favorite
+    User "1" --> "*" Blacklist : blocker
+    User "1" --> "*" Report : reporter
+    User "1" --> "*" Notification : recipient
+    User "1" --> "*" AdminAuditLog : operator
+
+    Category "1" --> "*" Recruitment
+    Recruitment "1" --> "*" Position
+    Position "1" --> "*" Application
+    Recruitment "1" --> "*" Application
+    Application "1" --> "*" ApplicationHistory
+
+    User "1" --> "*" ConversationParticipant
+    Conversation "1" --> "*" ConversationParticipant
+    Conversation "1" --> "*" Message
+    Message "1" --> "*" MessageDelete
+
+    PrivateMessageAccessAudit "1" --> "1" Conversation
+    PrivateMessageAccessAudit "1" --> "1" User : admin
+
+    %% 标签多对多（通过关联表）
+    User "*" --> "*" Tag : user_tags
+    Recruitment "*" --> "*" Tag : recruitment_tags
+    Position "*" --> "*" Tag : position_tags
+
+    %% 服务依赖（简化）
+    ApplicationService ..> RecruitmentService : 锁定/满员/结束
+    ApplicationService ..> NotificationService : emit
+    ModerationService ..> NotificationService : emit
+    ModerationService ..> PrivateMessageAccessAudit : 先审计
+    AuthService ..> EmailVerificationCode : 校验
+    DeletionService ..> User : 匿名化

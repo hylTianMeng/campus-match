@@ -1,0 +1,100 @@
+%% CampusCrew 关键时序图
+%% 覆盖：并发录取（最后名额）、到期自动结束、管理员私信访问审计、私信发送与轮询
+
+%% =====================================================================
+%% 1. 并发录取（最后名额）：BR-04/05/06/07 原子一致性（TD-04）
+%% =====================================================================
+sequenceDiagram
+    autonumber
+    actor Owner as 发布者
+    participant API as ApplicationAPI
+    participant SVC as ApplicationService
+    participant DB as MySQL(InnoDB)
+
+    Owner->>API: POST /applications/{id}/approve
+    API->>SVC: approve(owner, application_id)
+    SVC->>DB: BEGIN
+    SVC->>DB: SELECT * FROM recruitments WHERE id=? FOR UPDATE
+    SVC->>SVC: 惰性到期检查：now >= deadline_at ?
+    alt 已到截止
+        SVC->>DB: 先执行 ended/expired 结束，再拒绝本次录取
+        SVC-->>API: 409 招募已结束
+    else 未截止且 status=open 且未下架/封禁
+        SVC->>DB: 校验申请 status=pending 且 无同招募其它 accepted
+        SVC->>DB: UPDATE applications SET status='accepted', reason='approved'
+        SVC->>DB: 撤回同人本招募其它 pending → withdrawn/accepted_other_position
+        SVC->>DB: 若本岗满员：其余 pending → not_passed/capacity_full
+        SVC->>DB: 若全岗满员：recruitment → ended/filled
+        SVC->>DB: INSERT application_history + notifications(dedup_key 幂等)
+        SVC->>DB: COMMIT
+        SVC-->>API: 200 录取成功（含最新岗位/招募状态）
+    end
+
+%% =====================================================================
+%% 2. 到期自动结束：惰性检查 + 周期调度双保险（NFR-04 / TD-04）
+%% =====================================================================
+sequenceDiagram
+    autonumber
+    participant Sched as Scheduler(APScheduler)
+    participant SVC as RecruitmentService
+    participant DB as MySQL
+
+    Sched->>SVC: 每 30s 触发 scan_expired()
+    SVC->>DB: SELECT id FROM recruitments WHERE status='open' AND deadline_at <= now
+    loop 每个到期招募（逐条事务）
+        SVC->>DB: BEGIN; SELECT ... FOR UPDATE（复检 status 仍 open）
+        SVC->>DB: UPDATE recruitments SET status='ended', end_reason='expired', ended_at=now
+        SVC->>DB: UPDATE applications SET status='expired', reason='deadline_reached' WHERE pending
+        SVC->>DB: INSERT application_history + notifications(application_expired)
+        SVC->>DB: COMMIT
+    end
+    Note over SVC,DB: 所有写接口在业务事务开始前都做"惰性到期检查"，调度延迟也不会放行过期写入
+
+%% =====================================================================
+%% 3. 管理员私信访问审计：先留痕再返回正文（BR-17 / DEC-056~057）
+%% =====================================================================
+sequenceDiagram
+    autonumber
+    actor Admin as 管理员
+    participant API as AdminMessageAPI
+    participant SVC as ModerationService
+    participant DB as MySQL
+
+    Admin->>API: POST /admin/conversations/{id}/access {reason}
+    API->>SVC: access_conversation(admin, conversation_id, reason)
+    SVC->>DB: 校验 admin 角色 + 账号 active（管理权限不因封禁可用）
+    SVC->>DB: INSERT private_message_access_audits(reason, request_id)
+    alt 审计写入失败 / reason 为空
+        SVC-->>API: 403/400 拒绝，不返回正文
+    else 审计成功
+        SVC-->>API: 返回 request_id + 会话消息正文（分页复用同一 request_id）
+    end
+    Note over SVC,DB: 审计表仅 INSERT，应用层禁止 UPDATE/DELETE（防篡改）
+
+%% =====================================================================
+%% 4. 私信发送 + 10s HTTP 轮询（DEC-059~061 / F-27~29）
+%% =====================================================================
+sequenceDiagram
+    autonumber
+    actor A as 用户A(发送方)
+    actor B as 用户B(接收方)
+    participant API as MessageAPI
+    participant SVC as MessageService
+    participant DB as MySQL
+
+    A->>API: POST /conversations/{id}/messages {content}
+    API->>SVC: send(a, b, content)
+    SVC->>DB: 校验双方 is_verified、A 非封禁、黑名单方向（B 是否拉黑 A）
+    SVC->>DB: INSERT message + 更新 conversation.updated_at
+    SVC-->>API: 200 成功（不回传 B 的已读状态）
+
+    loop 每 ~10s（可配置）
+        B->>API: GET /poll?after_id={cursor}
+        API->>SVC: poll(b, after_id)
+        SVC->>DB: 读取增量 messages + notifications + unread_count
+        SVC-->>B: 新消息 + 未读数（游标前进）
+    end
+    B->>API: POST /conversations/{id}/read
+    API->>SVC: mark_read(b, conversation_id)
+    SVC->>DB: UPDATE conversation_participants SET last_read_message_id=?
+    SVC-->>B: 200

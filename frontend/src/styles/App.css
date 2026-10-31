@@ -1,0 +1,671 @@
+/* ===== 布局 ===== */
+.page-container {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: var(--space-5);
+}
+
+.narrow-page {
+  max-width: 680px;
+}
+
+.page-title {
+  font-size: 22px;
+  margin-bottom: var(--space-4);
+}
+
+.page-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-4);
+}
+
+.section-title {
+  font-size: 16px;
+  margin-bottom: var(--space-3);
+}
+
+.empty-state {
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.notice-box {
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: #fef3c7;
+  color: var(--color-warning);
+  font-size: 14px;
+  margin-bottom: var(--space-4);
+}
+
+/* ===== 应用外壳与顶栏 ===== */
+.app-shell {
+  min-height: 100vh;
+}
+
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--color-bg-card);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.app-header-inner {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 var(--space-5);
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+.logo {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+.app-nav {
+  display: flex;
+  gap: var(--space-4);
+  flex: 1;
+}
+
+.app-nav a {
+  color: var(--color-text-secondary);
+  font-size: 14px;
+}
+
+.app-nav a:hover {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.app-header-right {
+  display: flex;
+  align-items: center;
+}
+
+.avatar-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.app-header-user {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.app-header-nickname {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
+.app-header-user:hover .app-header-nickname {
+  color: var(--color-primary);
+}
+
+.app-main {
+  padding-bottom: var(--space-6);
+}
+
+/* ===== 认证页 ===== */
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 380px;
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  box-shadow: var(--shadow-md);
+}
+
+.auth-title {
+  font-size: 20px;
+  margin-bottom: var(--space-5);
+}
+
+.auth-switch {
+  margin-top: var(--space-4);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+/* ===== 招募大厅 ===== */
+.hall-topbar {
+  background: var(--color-bg-card);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.hall-topbar-inner {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 var(--space-5);
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.hall-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.hall-auth-user {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: 14px;
+}
+
+.hall-auth-user:hover {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.hall-auth-nickname {
+  font-weight: 500;
+}
+
+.hall-header {
+  background: var(--color-bg-card);
+  border-bottom: 1px solid var(--color-border);
+  padding: var(--space-5);
+}
+
+.hall-header-inner {
+  max-width: 960px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.hall-title {
+  font-size: 22px;
+}
+
+.hall-subtitle {
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  margin-top: var(--space-1);
+}
+
+.hall-filters {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.hall-filters .text-input {
+  flex: 1;
+  min-width: 140px;
+}
+
+.hall-main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: var(--space-5);
+}
+
+.recruitment-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-4);
+}
+
+/* ===== 招募卡片 ===== */
+.recruitment-card {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.15s ease;
+}
+
+.recruitment-card:hover {
+  box-shadow: var(--shadow-md);
+}
+
+.recruitment-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.recruitment-card-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.recruitment-card-tags,
+.detail-tags,
+.position-card-tags {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+.recruitment-card-meta {
+  display: flex;
+  gap: var(--space-3);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.recruitment-card-deadline {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+/* ===== 详情页 ===== */
+.detail-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.detail-head {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.detail-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.detail-title {
+  font-size: 24px;
+}
+
+.detail-owner,
+.detail-meta,
+.detail-deadline {
+  color: var(--color-text-secondary);
+  font-size: 14px;
+}
+
+.detail-section {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+}
+
+.detail-description {
+  white-space: pre-wrap;
+  color: var(--color-text);
+}
+
+.position-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-4);
+}
+
+/* ===== 岗位卡片 ===== */
+.position-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.position-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.position-card-name {
+  font-size: 15px;
+}
+
+.position-status {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.pos-available {
+  color: var(--color-success);
+}
+
+.pos-full {
+  color: var(--color-warning);
+}
+
+.pos-closed {
+  color: var(--color-text-muted);
+}
+
+.pos-applied {
+  color: var(--color-primary);
+}
+
+.pos-owner {
+  color: var(--color-text-muted);
+}
+
+.position-card-desc {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  min-height: 20px;
+}
+
+.position-card-meta {
+  display: flex;
+  gap: var(--space-3);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.position-apply-btn {
+  margin-top: auto;
+}
+
+/* ===== 申请状态 ===== */
+.app-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.app-status-detail {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+/* ===== 列表行 ===== */
+.list-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.list-row {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.list-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+}
+
+.list-row-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.list-row-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.list-row-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+/* ===== 申请管理行 ===== */
+.application-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.application-row {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.application-row-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.application-applicant {
+  font-weight: 600;
+}
+
+.application-position {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.application-message {
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.application-row-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* ===== 会话 ===== */
+.conversation-row {
+  cursor: pointer;
+}
+
+.conversation-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.conversation-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+/* ===== 聊天 ===== */
+.chat-page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 56px);
+  max-width: 720px;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-bottom: var(--space-4);
+}
+
+.chat-bubble {
+  max-width: 70%;
+}
+
+.chat-own {
+  align-self: flex-end;
+}
+
+.chat-other {
+  align-self: flex-start;
+}
+
+.chat-bubble-content {
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-own .chat-bubble-content {
+  background: var(--color-primary);
+  color: #fff;
+  border-bottom-right-radius: 2px;
+}
+
+.chat-other .chat-bubble-content {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-bottom-left-radius: 2px;
+}
+
+.chat-input-row {
+  display: flex;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+}
+
+/* ===== 我的页 ===== */
+.me-email {
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-4);
+}
+
+.entry-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+
+.entry-card {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  text-align: center;
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+.entry-card:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.logout-btn {
+  margin-top: var(--space-5);
+}
+
+/* ===== 分页 ===== */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+/* ===== 标签输入 ===== */
+.tag-input {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.tag-input-list {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+/* ===== 岗位编辑器 ===== */
+.position-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.position-editor-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.position-editor-row .text-input {
+  flex: 1;
+}
+
+.position-editor-readonly {
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
