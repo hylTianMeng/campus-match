@@ -1,0 +1,15 @@
+.DS_Store
+node_modules/
+dist/
+!static-page-complete/dist/
+!static-page-complete/dist/**
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.sqlite3
+*.sqlite3-*
+.env
+playwright-report/
+test-results/
+*.tsbuildinfo
