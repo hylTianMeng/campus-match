@@ -18,12 +18,11 @@ const routes = [
   ['MSG-01', '私信', 'chats'],
   ['MSG-02', '系统通知', 'notices'],
   ['ME-01', '个人资料', 'profile'],
-  ['ME-02', '我的发布', 'posts'],
-  ['ME-03', '我的申请', 'applications'],
+  ['ME-02', '管理发布', 'posts'],
+  ['ME-03', '当前申请', 'applications'],
   ['ME-04', '组队历史', 'teams'],
   ['ME-05', '我的收藏', 'favorites'],
   ['ME-06', '账号设置', 'settings'],
-  ['ME-07', '申请管理', 'review'],
   ['ADMIN-01', '用户管理', 'admin-users'],
   ['ADMIN-02', '招募管理', 'admin-posts'],
   ['ADMIN-03', '举报管理', 'admin-reports'],
@@ -76,9 +75,13 @@ let route = 'discover',
   params = new URLSearchParams(),
   scenario = 'normal',
   filter = '全部',
+  searchQ = '',
   authMode = 'login',
   returnTask = null,
   tab = '';
+// 路由与滚动位置记忆：避免每次重渲染都跳回页面顶部。
+let lastHash = '';
+const scrollMemo = {};
 function persist() {
   try {
     localStorage.setItem('campuscrew-v2', JSON.stringify(state));
@@ -103,11 +106,27 @@ const tags = [
   ['机器学习', '遥感'],
   ['用户研究', '无障碍'],
 ];
+// 我的三个已发布招募的标题；用于申请管理里标明每条申请对应哪个招募。
+const postTitle = (i = 0) =>
+  i === 0 && state.published ? state.published.title : titles[i] || titles[0];
 const routeLink = (to, label, cls = 'btn secondary') =>
   `<a class="${cls}" href="#${to}">${label}</a>`;
 const actionButton = (label, action, cls = 'btn secondary', attrs = '') =>
   `<button class="${cls}" data-action="${action}" ${attrs}>${label}</button>`;
 const badge = (text, color = '') => `<span class="badge ${color}">${text}</span>`;
+// 搜索结果不展示具体截止日期，只对临近截止的招募给出提示标签。
+const dueTags = [
+  ['不足 1 天截止', 'red'],
+  ['不足 2 天截止', 'amber'],
+  ['不足 1 周截止', 'amber'],
+  ['', ''],
+  ['不足 1 周截止', 'amber'],
+  ['', ''],
+];
+const dueTag = (i) => {
+  const [t, c] = dueTags[i] || ['', ''];
+  return t ? badge(t, c) + ' · ' : '';
+};
 const chips = (xs) =>
   `<div class="tags">${xs.map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>`;
 const note = (t, c = '') => `<div class="notice ${c}">${t}</div>`;
@@ -184,8 +203,8 @@ function authGate(task) {
   return true;
 }
 function go(to) {
+  if (location.hash.slice(1) === to) return render();
   location.hash = to;
-  if (location.hash.slice(1) === to) render();
 }
 function topbar() {
   let active =
@@ -198,17 +217,19 @@ function topbar() {
           : ['chats', 'notices'].includes(route)
             ? 'chats'
             : 'profile';
+  // 消息中心已从主导航移到右上角，作为铃铛图标置于头像与姓名左侧。
+  const bell = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>`;
+  const account =
+    state.identity === 'guest'
+      ? actionButton('登录 / 注册', 'auth', 'btn secondary')
+      : `<a href="#chats" class="bell${['chats', 'notices'].includes(route) ? ' active' : ''}" title="消息中心" aria-label="消息中心${state.unread ? `，${state.unread} 条未读` : ''}">${bell}${state.unread ? `<span class="num">${state.unread}</span>` : ''}</a><a href="#profile" class="avatar" title="个人资料" aria-label="个人资料">林</a><a class="name" href="#profile" title="个人资料">林知夏${state.identity === 'unverified' ? ' · 待校园认证' : ''}</a>`;
   return `<header class="topbar"><a class="brand" href="#discover"><span class="seal">紫</span><span><strong>CampusCrew</strong><small>清华大学校园组队</small></span></a><nav class="nav">${[
     ['discover', '发现组队'],
-    ['people', '找同学'],
     ['publish', '发布招募'],
-    ['chats', `消息中心${state.unread ? `<span class="num">${state.unread}</span>` : ''}`],
-    ['profile', '个人中心'],
+    ['people', '找同学'],
   ]
     .map(([r, n]) => routeLink(r, n, r === active ? 'active' : ''))
-    .join(
-      '',
-    )}</nav><div class="account">${state.identity === 'guest' ? actionButton('登录 / 注册', 'auth', 'btn secondary') : `<a href="#profile" class="avatar">林</a><a class="name" href="#settings">林知夏 · ${state.identity === 'unverified' ? '待校园认证' : '已认证'}</a>`}</div></header>`;
+    .join('')}</nav><div class="account">${account}</div></header>`;
 }
 function reviewbar() {
   return `<div class="reviewbar"><a href="#guide">◈ 原型目录 / 覆盖索引</a><label>评审身份 <select id="identity">${[
@@ -236,10 +257,10 @@ function admin(content) {
     .map(([id, n, r]) => routeLink(r, n, 'menu ' + (route === r ? 'active' : '')))
     .join(
       '',
-    )}</aside><div class="adminbody"><div class="adminhead"><span>校园组队平台 / 管理后台</span><div class="actions"><span>管理员 · 许老师</span>${routeLink('discover', '返回学生端', 'link')}${actionButton('退出', 'logout', 'link')}</div></div><main class="wrap">${state.identity === 'admin' ? content : empty('需要管理员权限', '请使用底部评审工具选择管理员身份后查看后台样例。', routeLink('discover', '返回发现组队'))}</main></div></div>`;
+    )}</aside><div class="adminbody"><div class="adminhead"><span>校园组队平台 / 管理后台</span><div class="actions"><span>管理员 · 许老师</span>${routeLink('discover', '返回学生端', 'link')}${actionButton('退出', 'logout', 'link')}</div></div><main class="wrap"><div class="backbar">${actionButton('← 返回', 'back', 'link')}</div>${state.identity === 'admin' ? content : empty('需要管理员权限', '请使用底部评审工具选择管理员身份后查看后台样例。', routeLink('discover', '返回发现组队'))}</main></div></div>`;
 }
-function empty(title, text, action = '', symbol = '○') {
-  return `<div class="empty"><div class="symbol">${symbol}</div><h2>${title}</h2><p>${text}</p><div class="actions">${action}</div></div>`;
+function empty(title, text, action = '', symbol = '○', cls = '') {
+  return `<div class="empty ${cls}"><div class="symbol">${symbol}</div><h2>${title}</h2><p>${text}</p><div class="actions">${action}</div></div>`;
 }
 function sceneControl() {
   return `<div class="panel"><div class="between"><span class="small muted">评审状态样例（不属于正式产品导航）</span><select id="scene" aria-label="切换页面状态">${[
@@ -289,16 +310,45 @@ function commonScene() {
   return '';
 }
 function card(i = 0, ended = false) {
-  return `<article class="card"><div class="between"><span class="eyebrow">${cats[i]} / ${String(i + 1).padStart(2, '0')}</span>${badge(ended ? '已结束 · 已截止' : '招募中', ended ? 'gray' : 'green')}</div><h3>${routeLink(`detail?id=${i}${ended ? '&scene=ended-time' : ''}`, titles[i], '')}</h3><p>${['寻找对可持续发展感兴趣的伙伴，一起把校园观察变成可使用的作品。', '从真实需求出发，完成一个可以展示、可以使用的课程项目。', '跨学科的小型研究与共创，欢迎带着好奇心加入。'][i % 3]}</p>${chips(tags[i])}<div class="roleline"><span>${i === 0 ? '前端开发 · 数据分析' : '研究 / 实践岗位'}</span><span>${i === 0 ? '1 / 4' : '1 / 4'} 已录取</span></div><div class="progress"><span style="width:25%"></span></div><div class="small muted">截止 ${ended ? '2026.10.20' : '2026.11.12'} · ${i % 2 ? '线上协作' : '校内 / 紫荆'}</div><div class="cardfoot"><span><span class="avatar">${['陈', '林', '沈', '周', '许', '唐'][i]}</span> ${['陈书宁', '林知夏', '沈亦舟', '周映雪', '许言', '唐以安'][i]}</span>${routeLink(`detail?id=${i}${ended ? '&scene=ended-time' : ''}`, '查看招募 ↗', 'link')}</div></article>`;
+  return `<article class="card"><div class="between"><span class="eyebrow">${cats[i]} / ${String(i + 1).padStart(2, '0')}</span>${badge(ended ? '已结束 · 已截止' : '招募中', ended ? 'gray' : 'green')}</div><h3>${routeLink(`detail?id=${i}${ended ? '&scene=ended-time' : ''}`, titles[i], '')}</h3><p>${['寻找对可持续发展感兴趣的伙伴，一起把校园观察变成可使用的作品。', '从真实需求出发，完成一个可以展示、可以使用的课程项目。', '跨学科的小型研究与共创，欢迎带着好奇心加入。'][i % 3]}</p>${chips(tags[i])}<div class="roleline"><span>${i === 0 ? '前端开发 · 数据分析' : '研究 / 实践岗位'}</span><span>${i === 0 ? '1 / 4' : '1 / 4'} 已录取</span></div><div class="progress"><span style="width:25%"></span></div><div class="small muted">${dueTag(i)}${i % 2 ? '线上协作' : '校内 / 紫荆'}</div><div class="cardfoot"><span><span class="avatar">${['陈', '林', '沈', '周', '许', '唐'][i]}</span> ${['陈书宁', '林知夏', '沈亦舟', '周映雪', '许言', '唐以安'][i]}</span>${routeLink(`detail?id=${i}${ended ? '&scene=ended-time' : ''}`, '查看招募 ↗', 'link')}</div></article>`;
 }
 function discover() {
+  const catList = [...new Set(cats)];
+  const q = searchQ.trim();
+  const matched = titles
+    .map((_, i) => i)
+    .filter((i) => (titles[i] + cats[i] + tags[i].join('')).includes(q));
+  const f = ['全部', ...catList].includes(filter) ? filter : '全部';
+  const visible = matched.filter((i) => f === '全部' || cats[i] === f);
+  const groups = catList
+    .map((c) => ({ c, items: visible.filter((i) => cats[i] === c) }))
+    .filter((g) => g.items.length);
+  const countIn = (c) => matched.filter((i) => cats[i] === c).length;
   return (
     header(
       '发现值得同行的事',
       '从课程合作到校园实践，找到适合自己的岗位。',
       routeLink('publish', '＋ 发布招募', 'btn'),
     ) +
-    `<section class="panel"><form id="search-form"><div class="search"><input id="keyword" placeholder="搜索招募标题、描述或标签" aria-label="招募关键词"><button class="btn">搜索招募</button></div><div class="filters"><label class="sr-only" for="category">一级分类</label><select id="category"><option>全部分类</option>${[...new Set(cats)].map((c) => `<option>${c}</option>`).join('')}</select><input id="tag-search" placeholder="标签，如 Python" aria-label="标签"><select id="available" aria-label="是否仍可申请"><option>全部开放招募</option><option>仍可申请</option></select><input id="place" placeholder="活动地点" aria-label="活动地点"><label class="small muted">截止 <input id="date-start" type="date" aria-label="截止起始时间"> 至 <input id="date-end" type="date" aria-label="截止结束时间"></label>${actionButton('清空条件', 'clear-search', 'link')}</div></form><div id="selected-filters" class="tags" style="margin-top:15px"></div></section><div class="sectionline"><h2>正在寻找伙伴 <small class="muted" id="result-count"> / 6 条招募</small></h2><select id="sort" aria-label="排序"><option>最新发布</option><option>即将截止</option></select></div><div class="grid" id="results">${titles.map((_, i) => card(i)).join('')}</div><div class="pagination">${actionButton('上一页', 'page-first', 'btn ghost', 'disabled')}<span class="btn">1</span>${actionButton('下一页', 'page-last', 'btn ghost', 'disabled')}</div><p class="small muted right" style="margin-top:12px">样例共 6 条，已全部显示；默认不展示已结束招募。</p>`
+    `<section class="searchbar"><form id="search-form" class="search"><input id="keyword" value="${esc(searchQ)}" placeholder="搜索招募标题、分类或标签" aria-label="招募关键词"><button class="btn">搜索招募</button>${searchQ || f !== '全部' ? actionButton('清空搜索', 'clear-search', 'btn ghost') : ''}</form></section><div class="cattabs">${[
+      '全部',
+      ...catList,
+    ]
+      .map(
+        (c) =>
+          `<button class="chip${c === f ? ' active' : ''}" data-action="filter:${c}">${c}<span class="chip-num">${c === '全部' ? matched.length : countIn(c)}</span></button>`,
+      )
+      .join(
+        '',
+      )}</div><div class="sectionline"><h2>搜索结果 <small class="muted">/ ${visible.length} 条招募</small></h2><select id="sort" aria-label="排序"><option>最新发布</option><option>即将截止</option></select></div>${
+      groups
+        .map(
+          (g) =>
+            `<div class="catsection"><div class="cathead"><h3>${g.c}</h3><small class="muted">${g.items.length} 条</small></div><div class="grid">${g.items.map((i) => card(i)).join('')}</div></div>`,
+        )
+        .join('') ||
+      `<div class="search-empty">${empty('没有符合条件的招募', '换个关键词，或清空条件后重试。', actionButton('清空搜索', 'clear-search'), '○', 'plain')}</div>`
+    }<p class="small muted right" style="margin-top:12px">样例共 ${titles.length} 条，按一级分类分区展示；默认不展示已结束招募。</p>`
   );
 }
 function detail() {
@@ -316,27 +366,38 @@ function detail() {
   return `<div class="crumb">${routeLink('discover', '发现组队', 'link')} / ${cats[i]} / 招募详情</div><div class="columns"><section><div class="panel"><div class="between">${chips([cats[i], ...tags[i]])}${badge(ended ? '已结束 · ' + why : '招募中', ended ? 'gray' : 'green')}</div><h1 class="title">${esc(published?.title || titles[i])}</h1><p class="small">发布于 2026.10.29 · 截止 ${ended && why === '已截止' ? '2026.10.20' : '2026.11.12 23:59'}</p><p class="small" style="margin-top:8px">活动安排：2026.11.15 下午 / 紫荆综合服务楼（示例）</p>${ended ? note('招募已结束，录取结果已锁定，不能重新开放、撤销或放弃录取。' + (why === '提前结束' ? '提前结束时待审申请的终态与通知文案待确认。' : ''), 'warn') : ''}${scenario === 'paused' ? note('当前暂停申请与审核。已存在记录保留；暂停期间撤回、放弃及文字编辑边界待确认。', 'warn') : ''}<h2 style="margin:28px 0 13px">关于这次合作</h2><div class="bodycopy">${published ? esc(published.description) : `我们想把校园里的低碳行动变成看得见的数据。
 从食堂、通勤和宿舍生活三个场景出发，进行访谈、数据整理与原型实现。
 
-你不需要是全能选手。我们希望每位伙伴都能负责一个明确的小方向，每周投入约 3–5 小时，共同完成调研与作品展示。`}</div></div><div class="panel"><h2>开放岗位 <small class="muted">逐岗申请 · 独立名额</small></h2>${[
-    '前端开发',
-    '数据分析',
-    '视觉设计',
-  ]
-    .map((r, j) => {
-      const used = j === 2 ? 1 : state.approved.filter((a) => a.role === r).length,
-        total = j === 0 ? 2 : 1;
-      let app = state.apps.find((a) => a.role === r && a.status === '待审核');
-      let full = j === 2 || used >= total;
-      return `<div class="role"><div class="between"><h3>${r}</h3>${badge(ended ? '已结束' : full ? '岗位已满' : app ? '本人已申请 · 待审核' : '剩余 ' + (total - used) + ' 名', full ? 'gray' : '')}</div><p>${['实现招募发现与申请体验，熟悉 HTML / CSS / React。', '整理调研结果，用 Python 完成数据分析与可视化。', '为最终展示设计视觉规范与信息图。'][j]}</p>${chips(
-        [
-          ['React', 'TypeScript'],
-          ['Python', '数据分析'],
-          ['Figma', '视觉设计'],
-        ][j],
-      )}<div class="progress"><span style="width:${(used / total) * 100}%"></span></div><div class="between"><span class="small muted">已录取 ${used} / ${total} 人</span>${own ? routeLink('review', '管理本岗申请') : actionButton(ended ? '招募已结束' : full ? '岗位已满' : app ? '已申请，等待审核' : '申请此岗位', `apply:${r}`, 'btn', ended || full || app || scenario === 'paused' ? 'disabled' : '')}</div></div>`;
-    })
-    .join(
-      '',
-    )}${routeLink('applications', '查看我的申请与历史 →', 'link')}</div>${i === 0 ? recruitmentExtras(state.published || { eventIntro: '了解校园低碳实践与挑战赛的背景和目标。', outcome: '完成调研报告和可展示的交互原型。' }) : ''}<div class="panel"><h2>申请情况</h2><p>目前有 ${i === 0 ? getPendingCount() : 2} 人申请中。申请资料仅发布者可查看。</p></div></section><aside><div class="panel"><div class="actions"><span class="avatar lg">陈</span><div><h3>陈书宁</h3><p class="small">${state.identity === 'guest' ? '发布者' : '环境学院 · 2024 级'}</p></div></div><p class="small" style="margin:18px 0">关注可持续发展，希望与不同专业的伙伴共同探索。</p><div class="actions">${routeLink('person', '查看主页')}${actionButton('私信', 'message', 'btn')}</div></div><div class="panel"><h3>把想法留在这里</h3><p class="small" style="margin:12px 0">收藏后可在个人中心回看，已结束招募也会保留。</p><div class="actions">${actionButton(state.saved ? '★ 已收藏' : '☆ 收藏招募', 'favorite')}${actionButton('举报招募', 'report:招募', 'link')}</div></div>${own ? `<div class="panel"><h3>发布者工具</h3><div class="actions" style="margin-top:18px">${routeLink('edit', '编辑招募')}${routeLink('review', '管理申请')}</div></div>` : ''}</aside></div>`;
+你不需要是全能选手。我们希望每位伙伴都能负责一个明确的小方向，每周投入约 3–5 小时，共同完成调研与作品展示。`}</div></div></section><aside><div class="panel"><div class="actions"><span class="avatar lg">陈</span><div><h3>陈书宁</h3><p class="small">${state.identity === 'guest' ? '发布者' : '环境学院 · 2024 级'}</p></div></div><p class="small" style="margin:18px 0">关注可持续发展，希望与不同专业的伙伴共同探索。</p><div class="actions">${routeLink('person', '查看主页')}${actionButton('私信', 'message', 'btn')}</div></div><div class="panel"><h3>参与招募</h3><p class="small" style="margin:12px 0">点击「一键参与」后在弹窗中选择岗位并提交申请。</p><div class="actions">${actionButton(ended ? '招募已结束' : '一键参与', 'join:' + i, 'btn', ended || scenario === 'paused' ? 'disabled' : '')}</div></div><div class="panel"><h3>申请情况</h3><p class="small" style="margin-top:12px">目前有 ${i <= 2 ? getPendingCount(i) : 2} 人申请中。申请资料仅发布者可查看。</p></div><div class="panel"><h3>把想法留在这里</h3><p class="small" style="margin:12px 0">收藏后可在个人中心回看，已结束招募也会保留。</p><div class="actions">${actionButton(state.saved ? '★ 已收藏' : '☆ 收藏招募', 'favorite')}${actionButton('举报招募', 'report:招募', 'link')}</div></div>${own ? `<div class="panel"><h3>发布者工具</h3><div class="actions" style="margin-top:18px">${routeLink('edit', '编辑招募')}${routeLink('posts?open=' + i + '&kind=review', '管理申请')}</div></div>` : ''}</aside></div>`;
+}
+// 「一键参与」弹窗：背景暗化，在弹窗内逐岗申请。
+function joinModal(i) {
+  const ended = scenario.startsWith('ended') || state.ended;
+  const own = params.has('own') && state.identity === 'normal';
+  const roles = ['前端开发', '数据分析', '视觉设计'];
+  const descs = [
+    '实现招募发现与申请体验，熟悉 HTML / CSS / React。',
+    '整理调研结果，用 Python 完成数据分析与可视化。',
+    '为最终展示设计视觉规范与信息图。',
+  ];
+  const skills = [
+    ['React', 'TypeScript'],
+    ['Python', '数据分析'],
+    ['Figma', '视觉设计'],
+  ];
+  modal(
+    '一键参与 · ' + esc(postTitle(i)),
+    note('选择一个岗位提交申请；不同岗位可分别申请。') +
+      roles
+        .map((r, j) => {
+          const used =
+              j === 2 ? 1 : state.approved.filter((a) => a.role === r && (a.post ?? 0) === i).length,
+            total = j === 0 ? 2 : 1;
+          const app = state.apps.find((a) => a.role === r && a.status === '待审核');
+          const full = j === 2 || used >= total;
+          return `<div class="role"><div class="between"><h3>${r}</h3>${badge(ended ? '已结束' : full ? '岗位已满' : app ? '本人已申请 · 待审核' : '剩余 ' + (total - used) + ' 名', full ? 'gray' : '')}</div><p>${descs[j]}</p>${chips(skills[j])}<div class="progress"><span style="width:${(used / total) * 100}%"></span></div><div class="between"><span class="small muted">已录取 ${used} / ${total} 人</span>${own ? routeLink('posts?open=' + i + '&kind=review', '管理本岗申请', 'link') : actionButton(ended ? '招募已结束' : full ? '岗位已满' : app ? '已申请，等待审核' : '申请此岗位', `apply:${r}`, 'btn', ended || full || app || scenario === 'paused' ? 'disabled' : '')}</div></div>`;
+        })
+        .join(''),
+    actionButton('关闭', 'close'),
+  );
 }
 function people() {
   return (
@@ -370,11 +431,41 @@ function personCards(q, t) {
   );
 }
 function person() {
-  let preview = params.has('preview'),
+  const preview = params.has('preview'),
     p = state.privacy;
+  const section = params.get('section');
+  const heads = { posts: '发布的招募', apps: '申请记录', teams: '组队历史' };
+  // 未公开的栏目既没有内容，也不会出现「查看详情」按钮。
+  const isPublic = { posts: !preview || p[1], apps: preview, teams: !preview || p[3] };
+  const summaries = {
+    posts: '公开招募会出现在发现组队中。',
+    apps: '仅本人可见，不对外公开。',
+    teams: '仅展示本人通过的招募及岗位。',
+  };
+  const bodies = {
+    posts: `<div class="grid two">${card(0)}${card(1)}</div>`,
+    apps: `<div class="panel"><h2>申请记录</h2><p class="small" style="margin-top:12px">2026.10.29 申请《校园碳足迹地图 · 挑战杯共创计划》数据分析 · 待审核</p><p class="small">2026.10.28 申请《软件工程大作业 · 校园互助平台》前端开发 · 已通过</p><p class="small muted" style="margin-top:14px">申请资料不对外公开，仅本人和对应招募发布者可见。</p></div>`,
+    teams: `<div class="panel"><h2>组队历史</h2><p>校园碳足迹地图 · 数据分析</p><p class="small muted">通过时间：2026.10.28 16:20</p></div>`,
+  };
+  const toSection = (k) => 'person?' + (preview ? 'preview&' : '') + 'section=' + k;
+  if (section && heads[section] && isPublic[section]) {
+    return (
+      header(
+        heads[section],
+        (preview ? '我的对外主页' : '同学主页') + ' · 详情',
+        routeLink('person' + (preview ? '?preview' : ''), '← 返回主页', 'btn ghost'),
+      ) + bodies[section]
+    );
+  }
+  const columns = Object.keys(heads)
+    .map(
+      (k) =>
+        `<div class="panel"><div class="between"><h2>${heads[k]}</h2>${isPublic[k] ? badge('已公开', 'green') : badge('未公开', 'gray')}</div><p class="small muted" style="margin:12px 0 16px">${isPublic[k] ? summaries[k] : '对方未公开此项'}</p><div class="actions">${isPublic[k] ? routeLink(toSection(k), '查看详情', 'link') : ''}</div></div>`,
+    )
+    .join('');
   return (
     header(preview ? '我的对外主页' : '同学主页', '公开资料不展示校园邮箱、审核结果或申请留言。') +
-    `<div class="panel"><div class="actions"><span class="avatar lg">${preview ? '林' : '陈'}</span><div class="grow"><h1>${preview ? esc(state.profile.name) : '陈书宁'}</h1><p>${preview ? esc(state.profile.dept) : '环境学院'} · 2024 级</p></div>${actionButton('私信联系', 'message', 'btn')}${actionButton('分享我的招募', 'share')}${actionButton(state.blocked ? '已拉黑' : '拉黑用户', 'block', 'btn ghost')}${actionButton('举报用户', 'report:用户', 'link')}</div><p style="margin:20px 0">${preview ? esc(state.profile.bio) : '关注可持续发展与校园公共生活。希望把一个小想法认真做成作品。'}</p>${chips(preview ? state.profile.tags.split(/[,，]/) : ['Python', '产品设计', '可持续发展'])}</div><div class="grid two"><section class="panel"><h2>发布的招募</h2>${preview && !p[1] ? note('对方未公开此项') : card(0)}</section><section><div class="panel"><h2>申请记录</h2>${note('申请资料仅本人和对应招募发布者可见。')}</div><div class="panel"><h2>组队历史</h2>${!preview || !p[3] ? note('对方未公开此项') : `<p>校园碳足迹地图 · 数据分析</p>`}</div></section></div>`
+    `<div class="panel"><div class="actions"><span class="avatar lg">${preview ? '林' : '陈'}</span><div class="grow"><h1>${preview ? esc(state.profile.name) : '陈书宁'}</h1><p>${preview ? esc(state.profile.dept) : '环境学院'} · 2024 级</p></div>${actionButton('私信联系', 'message', 'btn')}${preview ? '' : actionButton('分享我的招募', 'share')}${preview ? '' : actionButton('更多', 'more', 'btn ghost')}</div><p style="margin:20px 0">${preview ? esc(state.profile.bio) : '关注可持续发展与校园公共生活。希望把一个小想法认真做成作品。'}</p>${chips(preview ? state.profile.tags.split(/[,，]/) : ['Python', '产品设计', '可持续发展'])}</div><div class="person-grid">${columns}</div>`
   );
 }
 function roleForm(i = 0, data = {}) {
@@ -403,9 +494,9 @@ function publish(edit = false) {
       edit
         ? '仅保存一般信息；不会改变原发布时间或重新开放招募。'
         : '按岗位描述合作期待。草稿由你手动保存。',
-      routeLink('drafts', '草稿箱'),
+      edit ? '' : routeLink('drafts', '草稿箱'),
     ) +
-    `${edit ? note('已发布的截止时间、岗位人数及增删已锁定。岗位名称、描述、技能与活动时间暂作只读，编辑边界待确认。', 'warn') : ''}<form id="publish-form" data-edit="${edit}"><div class="columns"><section><div class="panel"><h2>01 / 基本信息</h2>${field('招募标题 *', 'title', d.title || '')}<div class="field"><label for="category-form">一级分类 *</label><select id="category-form" name="category"><option value="">请选择分类</option>${[...new Set(cats)].map((c) => `<option ${d.category === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div><div class="field"><label for="description">招募说明 *</label><textarea id="description" name="description" rows="6" placeholder="介绍目标、协作方式与投入期待">${esc(d.description || '')}</textarea></div></div><div class="panel"><div class="between"><h2>02 / 招募岗位</h2>${edit ? '' : actionButton('＋ 新增岗位', 'add-role')}</div><div id="roles" style="margin-top:18px">${edit ? d.roles.map((r) => `<div class="role"><div class="between"><h3>${r.name}</h3>${badge('发布后锁定', 'gray')}</div><p>招募人数 ${r.count} · 岗位描述 / 技能标签只读，编辑边界待定。</p></div>`).join('') : (d.roles || [{}, {}]).map((r, i) => roleForm(i, r)).join('')}</div></div><div class="panel"><h2>03 / 时间、地点与标签</h2><div class="formgrid">${field('招募截止时间 *', 'deadline', d.deadline || '', 'datetime-local', edit ? 'disabled' : '')}${field('活动时间（选填）', 'eventTime', d.eventTime || '', 'datetime-local', edit ? 'disabled' : '')}${field('活动地点（选填）', 'place', d.place || '')}${field('招募标签（选填，可新建）', 'tags', d.tags || '')}</div><p class="small muted">标签用逗号分隔；分类只能选择平台已有项。</p></div><div class="panel"><h2>04 / 更多信息 <small class="muted">全部选填</small></h2><p class="small muted">按需补充，未填写的项目不会出现在详情页。</p><div class="formgrid extra-fields">${field('招募者联系方式', 'contact', d.contact || '', 'text', 'placeholder="如邮箱或微信，可留空"')}${field('活动跳转链接', 'activityLink', d.activityLink || '', 'url', 'placeholder="https://..."')}${field('赛事 / 活动介绍', 'eventIntro', d.eventIntro || '')}${field('导师介绍', 'mentor', d.mentor || '')}${field('预期成果', 'outcome', d.outcome || '')}${field('参考资料 / 附件说明', 'attachmentInfo', d.attachmentInfo || '')}${field('附件访问链接', 'attachmentLink', d.attachmentLink || '', 'url', 'placeholder="https://..."')}</div></div></section><aside><div class="panel"><div class="eyebrow">A GOOD START</div><h3>明确期待，让合作更轻松</h3><p style="margin-top:15px;line-height:2">描述一个具体目标。<br>让每个岗位都有清楚职责。<br>区分招募截止和活动时间。<br>发布后名额与截止不能修改。</p></div>${note('附件可填写名称与访问链接说明；此静态原型不托管文件，也不会自动保存草稿。')}</aside></div><div id="form-errors" role="alert"></div><div class="stickyfoot"><span class="small muted">${edit ? '保留原发布时间' : '草稿仅自己可见 · 正式发布后直接公开'}</span><div class="actions">${routeLink('posts', '返回', 'btn ghost')}${edit ? '' : actionButton('手动保存草稿', 'save-draft')}<button class="btn" type="submit">${edit ? '保存一般信息' : '正式发布招募'}</button></div></div></form>`
+    `${edit ? note('已发布的截止时间、岗位人数及增删已锁定。岗位名称、描述、技能与活动时间暂作只读，编辑边界待确认。', 'warn') : ''}<form id="publish-form" data-edit="${edit}"><div class="columns"><section><div class="panel"><h2>01 / 基本信息</h2>${field('招募标题 *', 'title', d.title || '')}<div class="field"><label for="category-form">一级分类 *</label><select id="category-form" name="category"><option value="">请选择分类</option>${[...new Set(cats)].map((c) => `<option ${d.category === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>${field('招募者联系方式', 'contact', d.contact || '', 'text', 'placeholder="如邮箱或微信，可留空"')}<div class="field"><label for="description">招募说明 *</label><textarea id="description" name="description" rows="6" placeholder="介绍目标、协作方式与投入期待">${esc(d.description || '')}</textarea></div></div><div class="panel"><h2>02 / 招募岗位</h2><div id="roles" style="margin-top:18px">${edit ? d.roles.map((r) => `<div class="role"><div class="between"><h3>${r.name}</h3>${badge('发布后锁定', 'gray')}</div><p>招募人数 ${r.count} · 岗位描述 / 技能标签只读，编辑边界待定。</p></div>`).join('') : (d.roles || []).map((r, i) => roleForm(i, r)).join('')}</div>${edit ? '' : `<div class="roleform add-role">${actionButton('＋ 新增岗位', 'add-role', 'btn secondary')}</div>`}</div><div class="panel"><h2>03 / 时间、地点与标签</h2><div class="formgrid">${field('招募截止时间 *', 'deadline', d.deadline || '', 'datetime-local', edit ? 'disabled' : '')}${field('活动时间（选填）', 'eventTime', d.eventTime || '', 'datetime-local', edit ? 'disabled' : '')}${field('活动地点（选填）', 'place', d.place || '')}${field('招募标签（选填，可新建）', 'tags', d.tags || '')}</div><p class="small muted">标签用逗号分隔；分类只能选择平台已有项。</p></div></section><aside><div class="panel"><div class="eyebrow">A GOOD START</div><h3>明确期待，让合作更轻松</h3><p style="margin-top:15px;line-height:2">描述一个具体目标。<br>让每个岗位都有清楚职责。<br>区分招募截止和活动时间。<br>发布后名额与截止不能修改。</p></div></aside></div><div id="form-errors" role="alert"></div><div class="footbar"><span class="small muted">${edit ? '保留原发布时间' : '草稿仅自己可见 · 正式发布后直接公开'}</span><div class="actions">${routeLink('posts', '返回', 'btn ghost')}${edit ? '' : actionButton('手动保存草稿', 'save-draft')}<button class="btn" type="submit">${edit ? '保存一般信息' : '正式发布招募'}</button></div></div></form>`
   );
 }
 function draftPage() {
@@ -413,7 +504,7 @@ function draftPage() {
     header(
       '草稿箱',
       '缺项也可以保存。只有点击保存才会更新草稿。',
-      routeLink('publish', '＋ 新建招募', 'btn'),
+      routeLink('publish', '← 返回发布招募', 'btn ghost') + routeLink('publish', '＋ 新建招募', 'btn'),
     ) +
     `<div class="panel">${state.drafts.length ? state.drafts.map((d, i) => `<div class="row"><div class="grow"><h3>${esc(d.title || '未命名招募')}</h3><p>最近手动保存：${esc(d.savedAt)} · ${d.roles?.length || 0} 个岗位</p><p>${esc(d.roles?.map((r) => r.name || '未命名岗位').join(' / ') || '岗位信息尚未填写')}</p></div><div class="actions">${routeLink('publish?draft=' + i, '继续编辑')}${actionButton('删除', 'delete-draft:' + i, 'btn danger')}</div></div>`).join('') : empty('还没有草稿', '可以先保存不完整的想法，稍后继续。', routeLink('publish', '创建招募', 'btn'))}</div>`
   );
@@ -428,27 +519,68 @@ function profile() {
       `<div class="panel"><div class="actions"><span class="avatar lg">林</span><div><b>${esc(state.profile.name)}</b><p class="small">${state.identity === 'unverified' ? '待校园认证' : '校园身份已认证'} · 本人账号</p></div></div></div><form id="profile-form" class="panel"><div class="field"><label for="avatar-upload">个人头像（可选）</label><input id="avatar-upload" type="file" accept="image/*"><small>仅作本地选图预览，正式上传规则待确认。</small><div id="avatar-preview"></div></div><div class="formgrid">${field('昵称 *', 'profile-name', state.profile.name, 'text', 'required')}${field('院系', 'profile-dept', state.profile.dept)}${field('年级', 'profile-year', state.profile.year)}${field('技能与兴趣标签（可新建）', 'profile-tags', state.profile.tags)}</div><div class="field"><label for="profile-bio">个人简介</label><textarea id="profile-bio">${esc(state.profile.bio)}</textarea></div><button class="btn">保存资料</button></form>`,
   );
 }
+// 抽屉内的申请列表：按「人 + 招募 + 岗位」展示，与申请管理页同一口径。
+function drawerApps(post) {
+  const closed = state.ended || scenario.startsWith('ended');
+  const locals =
+    post === 0
+      ? state.apps
+          .filter((a) => a.status === '待审核')
+          .map((a) => ({ name: '林知夏', role: a.role, message: a.message }))
+      : [];
+  const samples = sampleApplicants
+    .filter((s) => s.post === post && !(s.name === '林知夏' && locals.length))
+    .map((s) => ({ ...s }));
+  const all = [...locals, ...samples].map((r) => ({
+    ...r,
+    status: state.approved.some(
+      (a) => a.name === r.name && (a.post ?? 0) === post && a.role === r.role,
+    )
+      ? '已通过'
+      : state.rejected.includes(r.name)
+        ? '未通过'
+        : '待审核',
+  }));
+  if (!all.length) return `<p class="small muted">这个招募还没有收到申请。</p>`;
+  return `<div class="between"><h3>申请管理 · ${esc(postTitle(post))}</h3>${badge('按申请人查看', '')}</div>${all
+    .map(
+      (r) =>
+        `<div class="row"><span class="avatar">${r.name[0]}</span><div class="grow"><div class="between"><h3>${r.name}</h3>${badge(r.status, r.status === '已通过' ? 'green' : r.status === '待审核' ? '' : 'gray')}</div><p>申请招募：${esc(postTitle(post))}</p><p>申请岗位：${esc(r.role)} · 留言：${esc(r.message || '未填写')}</p></div><div class="actions">${r.status === '待审核' ? actionButton('通过', `approve:${r.name}:${r.role}:${post}`, 'btn', closed ? 'disabled' : '') + actionButton('拒绝', `reject:${r.name}`, 'btn danger', closed ? 'disabled' : '') : r.status === '已通过' ? actionButton('撤销录取', `revoke:${r.name}`, 'btn danger', closed ? 'disabled' : '') : ''}</div></div>`,
+    )
+    .join('')}`;
+}
+// 抽屉内的招募管理：结束、删除等操作集中在这里。
+function drawerManage(post) {
+  const ended = post === 2 || state.ended;
+  return `<div class="between"><h3>管理招募 · ${esc(postTitle(post))}</h3>${badge(ended ? '已结束' : '招募中', ended ? 'gray' : 'green')}</div><p class="small muted" style="margin:10px 0">结束不可逆，结束后结果锁定；有申请历史的招募不可删除。</p><div class="actions">${routeLink('detail?own&id=' + post + (post === 2 ? '&scene=ended-time' : ''), '查看详情', 'btn ghost')}${actionButton('提前结束', 'end-post', 'btn danger', post > 0 || state.ended ? 'disabled' : '')}${actionButton('删除招募', 'delete-post:' + post, 'btn ghost', post === 0 || post === 2 ? 'disabled' : '')}<span class="small muted">${post === 0 || post === 2 ? '曾有申请历史，不可删除' : '无申请历史，可删除'}</span></div>`;
+}
 function posts() {
+  const open = params.get('open');
+  const kind = params.get('kind');
+  const items = [0, 1, 2].filter(
+    (i) =>
+      filter === '全部' ||
+      (filter === '招募中' && i < 2) ||
+      (filter === '已结束' && i === 2) ||
+      (filter === '受管理限制' && i === 1),
+  );
   return side(
     header(
-      '我的发布',
-      '管理自己的招募与岗位申请。',
+      '管理发布',
+      '每条招募都保留内容编辑、申请管理与管理招募三栏。',
       routeLink('drafts', '草稿箱') + routeLink('publish', '＋ 新建招募', 'btn'),
     ) +
       tabs(['全部', '招募中', '已结束', '受管理限制']) +
       `<div class="panel">${
-        [0, 1, 2]
-          .filter(
-            (i) =>
-              filter === '全部' ||
-              (filter === '招募中' && i < 2) ||
-              (filter === '已结束' && i === 2) ||
-              (filter === '受管理限制' && i === 1),
-          )
-          .map(
-            (i) =>
-              `<div class="row"><div class="grow"><div class="tags">${badge(i === 2 || state.ended ? '已结束 · ' + (i === 2 ? '已截止' : state.endedReason) : '招募中', i === 2 ? 'gray' : 'green')}${i === 1 ? badge('独立下架', 'red') : ''}${i === 1 ? badge('封禁暂停', 'amber') : ''}</div><h3 style="margin-top:10px">${i === 0 && state.published ? esc(state.published.title) : titles[i]}</h3><p>2026.10.29 发布 · ${i === 2 ? '2026.10.20' : '2026.11.12'} 截止</p><p>前端开发 ${state.approved.length} / 2 · 数据分析 0 / 1 · 待审 ${getPendingCount()}</p><div class="actions">${routeLink(`detail?own&id=${i}${i === 2 ? '&scene=ended-time' : ''}`, '查看详情', 'link')}${routeLink('review', '管理申请', 'link')}${i === 0 && !state.ended ? routeLink('edit', '编辑', 'link') : actionButton('编辑暂不可用', 'edit-unavailable', 'link', 'disabled')}<span class="small muted">${i > 0 ? '结束 / 限制下编辑边界待定' : ''}</span></div></div><div class="actions">${actionButton('提前结束', 'end-post', 'btn danger', i > 0 || state.ended ? 'disabled' : '')}${actionButton('删除', 'delete-post:' + i, 'btn ghost', i === 0 || i === 2 ? 'disabled' : '')}<span class="small muted">${i === 0 || i === 2 ? '曾有申请历史，不可删除' : '无申请历史，可删除'}</span></div></div>`,
-          )
+        items
+          .map((i) => {
+            const ended = i === 2 || state.ended;
+            const openThis = String(open) === String(i);
+            const drawer = openThis
+              ? `<div class="drawer">${kind === 'manage' ? drawerManage(i) : drawerApps(i)}</div>`
+              : '';
+            return `<div class="postitem"><div class="row"><div class="grow"><div class="tags">${badge(ended ? '已结束 · ' + (i === 2 ? '已截止' : state.endedReason) : '招募中', i === 2 ? 'gray' : 'green')}${i === 1 ? badge('独立下架', 'red') : ''}${i === 1 ? badge('封禁暂停', 'amber') : ''}</div><h3 style="margin-top:10px">${esc(postTitle(i))}</h3><p>2026.10.29 发布 · ${i === 2 ? '2026.10.20' : '2026.11.12'} 截止</p><p>已录取 ${getApprovedCount(i)} 人 · 待审 ${getPendingCount(i)} 人</p></div><div class="actions">${i === 0 && !state.ended ? routeLink('edit', '内容编辑', 'link') : actionButton('内容编辑', 'edit-unavailable', 'link', 'disabled')}${actionButton('申请管理', 'drawer:' + i + ':review', 'link')}${actionButton('管理招募', 'drawer:' + i + ':manage', 'link')}</div></div>${drawer}</div>`;
+          })
           .join('') || empty('暂无对应记录', '调整筛选条件试试。')
       }</div>`,
   );
@@ -512,17 +644,53 @@ function getApps() {
     return o;
   });
 }
-function getPendingCount() {
-  return ['林知夏', '沈亦舟', '周映雪'].filter((n) =>
-    !state.approved.some((a) => a.name === n) && !state.rejected.includes(n),
-  ).length + state.apps.filter((a) => a.status === '待审核').length;
+// 申请人样例：每位同学都对应一个具体的招募（post 为「我的发布」中的序号）。
+const sampleApplicants = [
+  {
+    name: '林知夏',
+    post: 0,
+    role: '前端开发',
+    dept: '计算机系 · 2024 级 · React / Python',
+    message: '有相关实践经验，希望参与一个完整项目。',
+    extra: '10:35 同时申请本招募的数据分析（待审核）',
+  },
+  {
+    name: '沈亦舟',
+    post: 1,
+    role: '前端开发',
+    dept: '软件学院 · 2024 级 · Vue / 交互设计',
+    message: '做过课程项目的界面实现，想承担页面部分。',
+  },
+  {
+    name: '周映雪',
+    post: 2,
+    role: '数据分析',
+    dept: '人文学院 · 2024 级 · Python / 文本处理',
+    message: '对古籍整理感兴趣，可以负责文本清洗与整理。',
+  },
+];
+function getPendingCount(post = 0) {
+  const locals = post === 0 ? state.apps.filter((a) => a.status === '待审核') : [];
+  const samplePending = sampleApplicants.filter(
+    (s) =>
+      s.post === post &&
+      !(s.name === '林知夏' && locals.length) &&
+      !state.approved.some((a) => a.name === s.name && (a.post ?? 0) === s.post && a.role === s.role) &&
+      !state.rejected.includes(s.name),
+  ).length;
+  return samplePending + locals.length;
+}
+function getApprovedCount(post = 0, role = '') {
+  return state.approved.filter(
+    (a) => (a.post ?? 0) === post && (!role || a.role === role),
+  ).length;
 }
 function recruiterOnly() {
   return state.identity === 'normal' && !state.banned;
 }
 function applications() {
   return side(
-    header('我的申请', '每次申请都有记录，新的申请不会覆盖旧结果。') +
+    header('当前申请', '每次申请都有记录，新的申请不会覆盖旧结果。') +
       tabs(['全部', '待审核', '已通过', '未通过', '已撤回', '已过期']) +
       `<div class="panel">${getApps()
         .filter((a) => filter === '全部' || filter === a.status)
@@ -555,55 +723,81 @@ function settings() {
 }
 function review() {
   const closed = state.ended || scenario.startsWith('ended');
-  const submittedCards = state.apps.filter((a) => a.status === '待审核' && (filter === '全部' || filter === a.role)).map((a) => `<div class="row"><span class="avatar">林</span><div class="grow"><div class="between"><h3>林知夏</h3>${badge('待审核')}</div><p>申请岗位：${esc(a.role)} · 本机演示提交</p>${optionalText('申请留言', a.message)}${optionalText('相关经历', a.experience)}${a.resume && safeLink(a.resume) ? `<p><a class="link" href="${esc(safeLink(a.resume))}" target="_blank" rel="noopener noreferrer">查看简历 / 作品 ↗</a></p>` : ''}<p class="small muted">仅此招募的发布者可查看这份资料。</p></div><div class="actions">${actionButton('通过', `approve:林知夏:${a.role}`, 'btn', closed ? 'disabled' : '')}${actionButton('拒绝', 'reject:林知夏', 'btn danger', closed ? 'disabled' : '')}</div></div>`).join('');
+  const postFilter = params.has('post') ? Math.max(0, Math.min(2, +params.get('post'))) : null;
+  const statusTabs = ['全部', '待审核', '已通过', '未通过'];
+  const f = statusTabs.includes(filter) ? filter : '全部';
+  // 本页按「申请人」组织：每条记录都要说清申请的是我发布的哪个招募、哪个岗位。
+  const locals = state.apps.filter((a) => a.status === '待审核');
+  const rows = [
+    ...locals.map((a) => ({
+      name: '林知夏',
+      post: 0,
+      role: a.role,
+      dept: '计算机系 · 2024 级',
+      message: a.message,
+      experience: a.experience,
+      resume: a.resume,
+    })),
+    ...sampleApplicants.filter((s) => !(s.post === 0 && s.name === '林知夏' && locals.length)),
+  ].map((r) => ({
+    ...r,
+    status: state.approved.some(
+      (a) => a.name === r.name && (a.post ?? 0) === r.post && a.role === r.role,
+    )
+      ? '已通过'
+      : state.rejected.includes(r.name)
+        ? '未通过'
+        : '待审核',
+  }));
+  const count = (s) => rows.filter((r) => r.status === s).length;
+  const list = rows
+    .filter((r) => postFilter === null || r.post === postFilter)
+    .filter((r) => f === '全部' || r.status === f)
+    .map(
+      (r) =>
+        `<div class="row"><span class="avatar">${r.name[0]}</span><div class="grow"><div class="between"><h3>${r.name}</h3>${badge(r.status, r.status === '已通过' ? 'green' : r.status === '待审核' ? '' : 'gray')}</div><p>申请招募：${routeLink('detail?id=' + r.post, esc(postTitle(r.post)), 'link')}</p><p>申请岗位：${esc(r.role)} · 10.29 10:30 提交</p><p>申请留言：${esc(r.message || '未填写留言')}</p>${optionalText('相关经历', r.experience)}${r.resume && safeLink(r.resume) ? `<p><a class="link" href="${esc(safeLink(r.resume))}" target="_blank" rel="noopener noreferrer">查看简历 / 作品 ↗</a></p>` : ''}<p class="small muted">申请资料仅该招募的发布者可见。</p><details><summary>必要资料与申请历史</summary><div class="timeline"><p>${esc(r.dept || '计算机系 · 2024 级')}</p><p>10:30 提交《${esc(postTitle(r.post))}》${esc(r.role)}申请${r.extra ? '；' + esc(r.extra) : ''}</p>${r.status === '已通过' ? '<p>11:00 已通过，本招募其他岗位待审自动撤回</p>' : r.status === '未通过' ? '<p>11:00 已拒绝，原因已记录</p>' : '<p>等待发布者审核</p>'}</div></details><div class="actions" style="margin-top:10px">${routeLink('person', '个人主页', 'link')}${actionButton('私信', 'message', 'link')}</div></div><div class="actions">${r.status === '待审核' ? actionButton('通过', `approve:${r.name}:${r.role}:${r.post}`, 'btn', closed || scenario === 'paused' ? 'disabled' : '') + actionButton('拒绝', `reject:${r.name}`, 'btn danger', closed || scenario === 'paused' ? 'disabled' : '') : r.status === '已通过' ? actionButton('撤销录取', `revoke:${r.name}`, 'btn danger', closed ? 'disabled' : '') : ''}</div></div>`,
+    )
+    .join('');
   return side(
-    header('申请管理', '校园碳足迹地图 · 按岗位独立审核', routeLink('posts', '返回我的发布')) +
+    header(
+      '申请管理',
+      '按申请人查看 · 每条记录标明申请的招募与岗位',
+      routeLink('posts', '返回管理发布'),
+    ) +
       note(
         closed
           ? '招募已结束，结果已锁定，审批与撤销录取均不可用。'
-          : '通过一个岗位会自动撤回该同学在本招募其他岗位的待审申请。',
+          : '通过某位同学的一个岗位后，其在本招募其他岗位的待审申请会自动撤回。',
         closed ? 'warn' : '',
       ) +
-      `<div class="statrow"><div class="panel"><strong>${state.approved.length} / 2</strong><span class="small muted">前端开发</span></div><div class="panel"><strong>0 / 1</strong><span class="small muted">数据分析</span></div><div class="panel"><strong>${getPendingCount()}</strong><span class="small muted">申请中 · 仅发布者可见资料</span></div></div>${tabs(['全部', '前端开发', '数据分析', '已通过'])}<div class="panel">${submittedCards}${[
-        '林知夏',
-        '沈亦舟',
-        '周映雪',
-      ]
-        .map((n, i) => {
-          const r = i === 2 ? '数据分析' : '前端开发';
-          if (filter !== '全部' && filter !== '已通过' && filter !== r) return '';
-          let yes = state.approved.some((a) => a.name === n),
-            no = state.rejected.includes(n);
-          if (filter === '已通过' && !yes) return '';
-          return `<div class="row"><span class="avatar">${n[0]}</span><div class="grow"><div class="between"><h3>${n}</h3>${badge(yes ? '已通过' : no ? '未通过' : '待审核', yes ? 'green' : '')}</div><p>申请岗位：${r} · 10.29 10:30</p><p>留言：有相关实践经验，希望参与一个完整项目。</p><details><summary>必要资料与历史</summary><div class="timeline"><p>计算机系 · 2024 级 · React / Python</p><p>10:30 提交 ${r}；${i === 0 ? '10:35 同招募申请数据分析，待审核' : '等待审核'}</p>${yes ? '<p>11:00 已通过，其他岗位待审自动撤回</p>' : ''}${no ? '<p>11:00 已拒绝，原因已记录</p>' : ''}</div></details><div class="actions" style="margin-top:10px">${routeLink('person', '个人主页', 'link')}${actionButton('私信', 'message', 'link')}</div></div><div class="actions">${!yes && !no ? actionButton('通过', `approve:${n}:${r}`, 'btn', closed || scenario === 'paused' ? 'disabled' : '') + actionButton('拒绝', `reject:${n}`, 'btn danger', closed || scenario === 'paused' ? 'disabled' : '') : yes ? actionButton('撤销录取', `revoke:${n}`, 'btn danger', closed ? 'disabled' : '') : ''}</div></div>`;
-        })
-        .join(
-          '',
-        )}</div>${note('评审补充：通过最后一个岗位名额时，当前岗位其他待审未通过；全岗满员则立即结束。')}${actionButton('演示最后一个名额通过', 'last-slot', 'btn secondary')}`,
+      `<div class="statrow"><div class="panel"><strong>${count('待审核')}</strong><span class="small muted">待审核同学</span></div></div><div class="tabs">${statusTabs.map((x) => actionButton(x, 'filter:' + x, x === f ? 'active' : '')).join('')}</div>${postFilter === null ? '' : note(`当前仅显示《${esc(postTitle(postFilter))}》的申请。${routeLink('review', '查看全部招募的申请', 'link')}`)}<div class="panel">${list || empty('暂无符合条件的申请', '换个筛选条件试试。')}</div>${note('评审补充：通过最后一个岗位名额时，当前岗位其他待审未通过；全岗满员则立即结束。')}${actionButton('演示最后一个名额通过', 'last-slot', 'btn secondary')}`,
   );
 }
 function chats() {
+  const thread = params.get('thread') === 'notice' ? 'notice' : 'chen';
+  // 系统通知当作一个「只读会话」：和私信同列表、置顶，但不能发文字。
+  const noticeThread = `<div class="chathead between"><div><b>系统通知</b> <small class="muted">系统消息 · 只读</small></div></div><div class="bubbles" id="bubbles"><p class="small muted" style="text-align:center">2026 年 10 月 29 日</p>${noticesData
+    .map(
+      ([title, text, to], i) =>
+        `<div class="bubble"><b>${title}</b><p style="margin:8px 0">${text}</p>${actionButton('查看', 'notice:' + i + ':' + to, 'link')}</div>`,
+    )
+    .join('')}</div><div class="composer readonly"><p class="small muted">系统通知只能查看，不能回复。</p></div>`;
+  const chenThread = `<div class="chathead between"><div>${actionButton('← 会话', 'chat-back', 'mobile-back link')}<b>陈书宁</b> <small class="muted">校园同学</small></div><div class="actions">${actionButton('隐藏会话', 'hide-chat', 'link')}${actionButton('拉黑', 'block', 'link')}</div></div><div class="bubbles" id="bubbles"><p class="small muted" style="text-align:center">2026 年 10 月 29 日</p>${state.deletedMessage ? '' : `<div class="bubble">你好！我正在寻找一起完成校园项目的伙伴。</div><div class="actions">${actionButton('仅为我删除', 'delete-message', 'link')}${actionButton('举报此消息', 'report:消息', 'link')}</div>`}<div class="bubble self">可以先看看我的招募：${routeLink('detail', titles[0], '')}</div>${state.messages.map((m) => `<div class="bubble self">${esc(m)}</div>`).join('')}</div><form id="message-form" class="composer"><textarea id="message-input" placeholder="输入文字，或粘贴招募链接…" aria-label="私信内容"></textarea><div class="between" style="margin-top:10px"><span class="small muted">仅文字 · 无已读回执</span><button class="btn" ${state.blocked ? 'disabled' : ''}>发送</button></div>${state.blocked ? '<p class="small muted">已拉黑该用户，当前发送受限。</p>' : ''}</form>`;
   return (
-    header('消息中心', '与同学自由沟通，无需先建立申请关系。') +
-    `<div class="tabs">${routeLink('chats', '私信', 'active')}${routeLink('notices', '系统通知' + (state.unread ? ' · ' + state.unread : ''), '')}</div>${note('管理员可在填写查看原因并成功记录访问审计后，查看会话内容。个人删除与隐藏只影响自己。')}<div class="panel chat mobile-list" id="chat-shell"><aside class="conversations"><h3 style="padding:10px">最近会话</h3>${state.hiddenChat ? '<p class="small muted" style="padding:15px">此会话已为你隐藏</p>' : actionButton('<span class="avatar">陈</span> 陈书宁 <span class="num">2</span>', 'open-chat', 'row link')}<div class="row"><div><b>沈亦舟</b><p>可以一起讨论研究方向。</p></div></div></aside><section class="chatmain"><div class="chathead between"><div>${actionButton('← 会话', 'chat-back', 'mobile-back link')}<b>陈书宁</b> <small class="muted">校园同学</small></div><div class="actions">${actionButton('隐藏会话', 'hide-chat', 'link')}${actionButton('拉黑', 'block', 'link')}</div></div><div class="bubbles" id="bubbles"><p class="small muted" style="text-align:center">2026 年 10 月 29 日</p>${state.deletedMessage ? '' : `<div class="bubble">你好！我正在寻找一起完成校园项目的伙伴。</div><div class="actions">${actionButton('仅为我删除', 'delete-message', 'link')}${actionButton('举报此消息', 'report:消息', 'link')}</div>`}<div class="bubble self">可以先看看我的招募：${routeLink('detail', titles[0], '')}</div>${state.messages.map((m) => `<div class="bubble self">${esc(m)}</div>`).join('')}</div><form id="message-form" class="composer"><textarea id="message-input" placeholder="输入文字，或粘贴招募链接…" aria-label="私信内容"></textarea><div class="between" style="margin-top:10px"><span class="small muted">仅文字 · 无已读回执</span><button class="btn" ${state.blocked ? 'disabled' : ''}>发送</button></div>${state.blocked ? '<p class="small muted">已拉黑该用户，当前发送受限。</p>' : ''}</form></section></div>${actionButton('演示新消息更新', 'new-message', 'link')} · ${actionButton('演示发送失败', 'send-error', 'link')} · ${actionButton('查看对方保留记录样例', 'other-history', 'link')}`
+    header('消息中心', '私信与系统通知在同一个列表；系统通知只读并置顶。') +
+    `${note('系统通知和私信是同一种会话，只是不能回复。管理员查看会话需先填写原因并记录访问审计。')}<div class="panel chat mobile-list${params.has('thread') ? ' mobile-thread' : ''}" id="chat-shell"><aside class="conversations"><h3 style="padding:10px">消息列表</h3><a class="row pinned${thread === 'notice' ? ' active' : ''}" href="#chats?thread=notice"><span class="avatar">通</span><div class="grow"><div class="between"><b>系统通知</b><span class="badge">置顶</span></div><p>申请、下架与处罚结果 · ${noticesData.length} 条</p></div>${state.unread ? `<span class="num">${state.unread}</span>` : ''}</a>${state.hiddenChat ? '<p class="small muted" style="padding:15px">此会话已为你隐藏</p>' : `<a class="row${thread === 'chen' ? ' active' : ''}" href="#chats?thread=chen"><span class="avatar">陈</span><div class="grow"><b>陈书宁</b><p>你好！我正在寻找一起完成校园项目的伙伴。</p></div><span class="num">2</span></a>`}<div class="row"><div><b>沈亦舟</b><p>可以一起讨论研究方向。</p></div></div></aside><section class="chatmain">${thread === 'notice' ? noticeThread : chenThread}</section></div>${actionButton('演示新消息更新', 'new-message', 'link')} · ${actionButton('演示发送失败', 'send-error', 'link')} · ${actionButton('查看对方保留记录样例', 'other-history', 'link')}`
   );
 }
 const noticesData = [
   ['申请通过', '你申请的前端开发岗位已通过，请查看本人记录。', 'applications'],
   ['申请未通过', '本次申请未通过，原因可在申请历史中查看。', 'applications'],
   ['申请到期', '招募已截止，尚未审核的申请已过期。', 'applications'],
-  ['申请者放弃录取', '有一位申请者放弃了尚在招募中的录取，名额已释放。', 'review'],
+  ['申请者放弃录取', '有一位申请者放弃了尚在招募中的录取，名额已释放。', 'posts'],
   ['招募下架', '你发布的招募已暂停公开；本人可查看适当处置说明。', 'posts'],
   ['招募恢复', '管理限制已解除，符合原截止与生命周期条件的招募恢复展示。', 'posts'],
   ['账号处罚', '账号业务操作受到限制，请查看账号状态说明。', 'settings'],
   ['举报处理完成', '你提交的举报已核查并处理，感谢维护校园社区。', 'discover'],
 ];
-function notices() {
-  return (
-    header('系统通知', '只向你展示与你有关的安全结果摘要。') +
-    `<div class="tabs">${routeLink('chats', '私信', '')}${routeLink('notices', '系统通知', 'active')}</div>${tabs(['全部', '未读'])}<div class="panel">${noticesData.map(([title, text, to], i) => (filter === '未读' && state.noticeRead.includes(i) ? '' : `<div class="row"><span class="avatar">${state.noticeRead.includes(i) ? '✓' : '·'}</span><div class="grow"><h3>${title} ${state.noticeRead.includes(i) ? '' : badge('未读')}</h3><p>${text}</p><p>2026.10.29 11:${String(i * 5).padStart(2, '0')}</p></div>${actionButton('查看', 'notice:' + i + ':' + to, 'link')}</div>`)).join('')}</div>${note('申请者收到的下架提示仅为“此招募暂不可查看”；处罚通知不包含举报者身份或识别性证据。')}`
-  );
-}
 function table(headers, rows) {
   return `<table><thead><tr>${headers.map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map((cells) => `<tr>${cells.map((c, i) => `<td data-label="${headers[i]}">${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
 }
@@ -781,7 +975,7 @@ function scenarios() {
 }
 function publishedDetail() {
   const d = state.published;
-  return `<div class="crumb">${routeLink('posts', '我的发布', 'link')} / 已公开详情</div>${header(esc(d.title || titles[0]), '发布者本人视图 · 一般信息保存不改变发布时间', routeLink('edit', '编辑一般信息') + routeLink('review', '管理申请', 'btn'))}<div class="columns"><section><div class="panel">${chips([d.category || '学科竞赛', ...(d.tags || '').split(/[,，]/).filter(Boolean)])}<h2 style="margin:24px 0 12px">招募说明</h2><div class="bodycopy">${esc(d.description || '')}</div><p style="margin-top:20px">原截止：${esc(d.deadline || '2026-11-12T23:59')}<br>活动时间：${esc(d.eventTime || '未填写')}<br>地点：${esc(d.place || '未填写')}</p></div>${recruitmentExtras(d)}<div class="panel"><h2>招募岗位</h2>${(d.roles || []).map((r) => `<div class="role"><div class="between"><h3>${esc(r.name)}</h3>${badge('0 / ' + r.count + ' 已录取')}</div><p>${esc(r.desc || '暂无补充描述')}</p>${chips((r.tags || '').split(/[,，]/).filter(Boolean))}${routeLink('review', '管理岗位申请', 'link')}</div>`).join('')}</div></section><aside><div class="panel"><h3>发布成功，即刻公开</h3><p style="margin:15px 0">这是本机保存的演示内容，不包含管理员审批等待环节。</p>${badge(state.ended ? '已结束 · ' + state.endedReason : '招募中', state.ended ? 'gray' : 'green')}</div></aside></div>`;
+  return `<div class="crumb">${routeLink('posts', '管理发布', 'link')} / 已公开详情</div>${header(esc(d.title || titles[0]), '发布者本人视图 · 一般信息保存不改变发布时间', routeLink('edit', '编辑一般信息') + routeLink('posts?open=0&kind=review', '管理申请', 'btn'))}<div class="columns"><section><div class="panel">${chips([d.category || '学科竞赛', ...(d.tags || '').split(/[,，]/).filter(Boolean)])}<h2 style="margin:24px 0 12px">招募说明</h2><div class="bodycopy">${esc(d.description || '')}</div><p style="margin-top:20px">原截止：${esc(d.deadline || '2026-11-12T23:59')}<br>活动时间：${esc(d.eventTime || '未填写')}<br>地点：${esc(d.place || '未填写')}</p></div>${recruitmentExtras(d)}<div class="panel"><h2>招募岗位</h2>${(d.roles || []).map((r) => `<div class="role"><div class="between"><h3>${esc(r.name)}</h3>${badge('0 / ' + r.count + ' 已录取')}</div><p>${esc(r.desc || '暂无补充描述')}</p>${chips((r.tags || '').split(/[,，]/).filter(Boolean))}${routeLink('posts?open=0&kind=review', '管理岗位申请', 'link')}</div>`).join('')}</div></section><aside><div class="panel"><h3>发布成功，即刻公开</h3><p style="margin:15px 0">这是本机保存的演示内容，不包含管理员审批等待环节。</p>${badge(state.ended ? '已结束 · ' + state.endedReason : '招募中', state.ended ? 'gray' : 'green')}</div></aside></div>`;
 }
 // The hash selects a page; query parameters select a review scenario on that page.
 function render() {
@@ -790,6 +984,21 @@ function render() {
   route = r;
   params = new URLSearchParams(q || '');
   scenario = params.get('scene') || 'normal';
+  // 系统通知并入消息中心；申请管理并入管理发布，旧链接自动跳转。
+  if (route === 'notices') {
+    location.hash = 'chats?thread=notice';
+    return;
+  }
+  if (route === 'review') {
+    location.hash =
+      'posts' + (params.get('post') ? '?open=' + params.get('post') + '&kind=review' : '');
+    return;
+  }
+  // 记住滚动位置：同页交互（抽屉、审批等）不跳回顶部，返回时恢复原位置。
+  const samePath = lastHash !== '' && lastHash.split('?')[0] === hash.split('?')[0];
+  if (lastHash) scrollMemo[lastHash] = window.scrollY || 0;
+  const restoreY = samePath ? scrollMemo[lastHash] || 0 : scrollMemo[hash] || 0;
+  lastHash = hash;
   const protectedRoutes = [
     'people',
     'person',
@@ -821,9 +1030,7 @@ function render() {
     teams,
     favorites,
     settings,
-    review,
     chats,
-    notices,
     'admin-users': adminUsers,
     'admin-posts': adminPosts,
     'admin-reports': adminReports,
@@ -846,15 +1053,18 @@ function render() {
       '公开招募可以自由浏览，完整资料与业务操作需要校园身份。',
       actionButton('登录 / 继续认证', 'auth', 'btn'),
     );
-  } else if (route === 'review' && !recruiterOnly()) {
-    content = empty('仅招募发布者可查看申请资料', '其他同学只能看到申请中人数。', routeLink('discover', '返回发现组队'));
   } else content = commonScene() || (functions[route] || systemPage)();
   let readOnly = state.identity === 'banned' || state.banned;
+  // 除首页外，所有页面都提供返回入口。
+  const backbar =
+    route === 'discover'
+      ? ''
+      : `<div class="backbar">${actionButton('← 返回', 'back', 'link')}</div>`;
   $('#app').innerHTML =
     (route.startsWith('admin')
       ? admin(content)
       : topbar() +
-        `<main class="wrap">${readOnly ? note('账号当前只读：可查看允许的历史，业务写操作不可用。封禁期间注销等例外边界待确认。', 'warn') : ''}${['guide', 'scenarios', 'auth'].includes(route) ? '' : sceneControl()}${content}<footer class="footer">CAMPUSCREW · 清华大学校园组队 / 静态交互原型 · 非官方校方网站</footer></main>`) +
+        `<main class="wrap">${backbar}${readOnly ? note('账号当前只读：可查看允许的历史，业务写操作不可用。封禁期间注销等例外边界待确认。', 'warn') : ''}${['guide', 'scenarios', 'auth'].includes(route) ? '' : sceneControl()}${content}<footer class="footer">CAMPUSCREW · 清华大学校园组队 / 静态交互原型 · 非官方校方网站</footer></main>`) +
     reviewbar();
   document.title = (routes.find((x) => x[2] === route)?.[1] || '原型目录') + ' · CampusCrew';
   if (readOnly) {
@@ -869,6 +1079,11 @@ function render() {
       note('旧页面中的岗位可能已满、已截止或申请已经处理。当前操作没有成功。', 'error'),
       actionButton('刷新最新状态', 'refresh-conflict', 'btn'),
     );
+  const applyScroll = () => {
+    if (typeof window.scrollTo === 'function') window.scrollTo(0, restoreY);
+  };
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(applyScroll);
+  else applyScroll();
 }
 function openAuth(mode = 'login') {
   authMode = mode;
@@ -909,6 +1124,26 @@ function openApply(role) {
 // All generated controls dispatch through data-action to keep the static views interactive.
 function action(a, el) {
   if (a === 'close') return close();
+  if (a === 'back') {
+    if (history.length > 1) return history.back();
+    return go('discover');
+  }
+  // 一键参与：弹窗暗化背景，在弹窗内选择岗位申请。
+  if (a.startsWith('join:')) return joinModal(+a.split(':')[1]);
+  // 管理发布里的抽屉：申请管理 / 管理招募
+  if (a.startsWith('drawer:')) {
+    const [, post, kind] = a.split(':');
+    return go('posts?open=' + post + '&kind=' + (kind === 'manage' ? 'manage' : 'review'));
+  }
+  if (a === 'drawer-close') return go('posts');
+  // 拉黑与举报合并到「更多」
+  if (a === 'more')
+    return modal(
+      '更多操作',
+      note('拉黑与举报集中在「更多」中，避免误触。') +
+        `<div class="menu-list">${actionButton(state.blocked ? '解除拉黑' : '拉黑用户', state.blocked ? 'unblock' : 'block', 'btn secondary')}${actionButton('举报用户', 'report:用户', 'btn danger')}</div>`,
+      actionButton('取消', 'close'),
+    );
   if (a === 'auth') return openAuth(state.identity === 'unverified' ? 'verify' : 'login');
   if (a === 'verify') return openAuth('verify');
   if (a.startsWith('auth-') && ['auth-login', 'auth-register', 'auth-verify'].includes(a))
@@ -1074,18 +1309,18 @@ function action(a, el) {
   }
   if (a.startsWith('approve:')) {
     if (!recruiterOnly()) return toast('仅招募发布者可审核申请。');
-    const [, name, role] = a.split(':');
+    const [, name, role, post = '0'] = a.split(':');
     return confirmAction(
       '通过申请',
-      `通过 ${name} 的 ${role} 申请。该同学本招募其他岗位待审将自动撤回。若岗位满员，其他待审未通过；全岗满员则招募立即结束。`,
-      'do-approve:' + name + ':' + role,
+      `通过 ${name} 在《${postTitle(+post)}》的 ${role} 申请。该同学本招募其他岗位待审将自动撤回。若岗位满员，其他待审未通过；全岗满员则招募立即结束。`,
+      'do-approve:' + name + ':' + role + ':' + post,
     );
   }
   if (a.startsWith('do-approve:')) {
     if (!recruiterOnly()) return toast('仅招募发布者可审核申请。');
     if (!authGate(a)) return;
-    const [, name, role] = a.split(':');
-    state.approved.push({ name, role });
+    const [, name, role, post = '0'] = a.split(':');
+    state.approved.push({ name, role, post: +post });
     persist();
     close();
     render();
@@ -1119,7 +1354,7 @@ function action(a, el) {
     );
   if (a === 'last-slot-confirm') {
     if (!authGate(a)) return;
-    state.approved.push({ name: '林知夏', role: '前端开发' });
+    state.approved.push({ name: '林知夏', role: '前端开发', post: 0 });
     state.rejected.push('沈亦舟', '周映雪');
     state.ended = true;
     state.endedReason = '已招满';
@@ -1438,12 +1673,9 @@ function action(a, el) {
     return toast('筛选已更新。');
   }
   if (a === 'clear-search') {
-    const f = $('#search-form');
-    f.reset();
-    $('#results').innerHTML = titles.map((_, i) => card(i)).join('');
-    $('#selected-filters').innerHTML = '';
-    $('#result-count').textContent = ' / 6 条招募';
-    return;
+    searchQ = '';
+    filter = '全部';
+    return render();
   }
   if (a === 'clear-people') {
     $('#people-search').reset();
@@ -1477,8 +1709,8 @@ function startWalk(i) {
     'detail',
     'publish',
     'edit',
-    'review',
-    'review',
+    'posts?open=0&kind=review',
+    'posts?open=0&kind=review',
     'applications',
     'applications',
     'applications?scene=ended-time',
@@ -1654,42 +1886,9 @@ document.addEventListener('submit', (e) => {
     return toast('消息已发送（本地演示）。');
   }
   if (f.id === 'search-form') {
-    let q = $('#keyword').value.trim(),
-      cat = $('#category').value,
-      t = $('#tag-search').value.trim(),
-      place = $('#place').value.trim(),
-      start = $('#date-start').value,
-      end = $('#date-end').value;
-    let ids = titles
-      .map((_, i) => i)
-      .filter(
-        (i) =>
-          (titles[i] + tags[i].join('')).includes(q) &&
-          (cat === '全部分类' || cats[i] === cat) &&
-          tags[i].join('').includes(t) &&
-          (!place || '校内 紫荆 线上协作'.includes(place)) &&
-          (!start || start <= '2026-11-12') &&
-          (!end || end >= '2026-11-12'),
-      );
-    $('#results').innerHTML =
-      ids.map((i) => card(i)).join('') ||
-      empty(
-        '没有符合条件的招募',
-        '清空部分筛选条件后再试。',
-        actionButton('清空条件', 'clear-search'),
-      );
-    $('#result-count').textContent = ' / ' + ids.length + ' 条招募';
-    $('#selected-filters').innerHTML = [
-      ['keyword', q],
-      ['category', cat === '全部分类' ? '' : cat],
-      ['tag-search', t],
-      ['place', place],
-      ['date-start', start],
-      ['date-end', end],
-    ]
-      .filter((x) => x[1])
-      .map(([id, v]) => actionButton(esc(v) + ' ×', 'remove-filter:' + id, 'chip active'))
-      .join('');
+    searchQ = $('#keyword').value.trim();
+    filter = '全部';
+    render();
     return;
   }
   if (f.id === 'people-search') {
@@ -1700,8 +1899,8 @@ document.addEventListener('submit', (e) => {
   }
 });
 window.addEventListener('hashchange', () => {
-  filter = '全部';
+  // 同一页面内只改查询参数（抽屉、筛选）时不重置筛选标签。
+  if (location.hash.slice(1).split('?')[0] !== lastHash.split('?')[0]) filter = '全部';
   render();
-  scrollTo(0, 0);
 });
 render();

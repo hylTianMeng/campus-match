@@ -134,7 +134,7 @@ small,
 }
 .nav {
   display: flex;
-  gap: 30px;
+  gap: 64px;
   align-self: stretch;
 }
 .nav a {
@@ -178,6 +178,41 @@ small,
   padding: 0 5px;
   font-size: 10px;
   margin-left: 4px;
+}
+/* 顶栏右侧的消息中心铃铛（原导航项移到账号区） */
+.bell {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  color: #82778a;
+  flex-shrink: 0;
+  transition:
+    background 0.18s,
+    color 0.18s;
+}
+.bell svg {
+  width: 21px;
+  height: 21px;
+}
+.bell:hover,
+.bell.active {
+  background: #f6eff8;
+  color: var(--p);
+}
+.bell .num {
+  position: absolute;
+  top: 1px;
+  right: -1px;
+  min-width: 17px;
+  padding: 1px 4px;
+  margin: 0;
+  line-height: 1;
+  text-align: center;
+  border: 2px solid white;
+  border-radius: 10px;
 }
 .wrap {
   max-width: 1280px;
@@ -877,13 +912,14 @@ dialog .actions {
   margin-top: 4px;
 }
 .statrow {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  display: flex;
   gap: 14px;
   margin-bottom: 20px;
 }
 .statrow .panel {
   margin: 0;
+  flex: 1 1 0;
+  max-width: 260px;
 }
 .statrow strong {
   display: block;
@@ -935,7 +971,7 @@ dialog .actions {
     gap: 15px;
   }
   .nav {
-    gap: 18px;
+    gap: 34px;
   }
   .account .name {
     display: none;
@@ -1163,3 +1199,156 @@ dialog .actions {
     max-width: 90px;
   }
 }
+/* v3: 吸顶导航、分类分区、抽屉与三栏主页 */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+.searchbar .search {
+  margin-bottom: 0;
+}
+.cattabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 16px 0 4px;
+}
+.cattabs .chip {
+  cursor: pointer;
+  padding: 7px 14px;
+  font-size: 12px;
+  gap: 7px;
+}
+.chip-num {
+  font-size: 11px;
+  color: #a793ae;
+}
+.cattabs .chip.active .chip-num {
+  color: var(--p);
+}
+.catsection {
+  margin-bottom: 34px;
+}
+.cathead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 26px 0 16px;
+  padding-left: 11px;
+  border-left: 3px solid var(--p);
+}
+.cathead h3 {
+  font-size: 17px;
+}
+.empty.plain {
+  background: transparent;
+  border: 0;
+  padding: 64px 20px;
+}
+.roleform.add-role {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 132px;
+  border-style: dashed;
+  background: #fcfbfd;
+}
+.roleform.add-role .btn {
+  width: 100%;
+  min-height: 132px;
+  border-style: dashed;
+}
+.footbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 16px 20px;
+}
+.backbar {
+  margin-bottom: 14px;
+}
+.backbar button {
+  font-size: 13px;
+  color: var(--muted);
+}
+.postitem + .postitem .row {
+  border-top: 1px solid var(--line);
+}
+.postitem .row:last-child {
+  border-bottom: 0;
+}
+.drawer {
+  border-top: 1px dashed #ddd0e4;
+  margin: 0 0 18px;
+  padding-top: 14px;
+}
+.drawer .row:last-child {
+  border-bottom: 0;
+}
+.person-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+.person-grid .panel {
+  margin-bottom: 0;
+}
+.menu-list {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0 4px;
+}
+.menu-list .btn {
+  width: 100%;
+}
+.conversations .pinned {
+  background: #faf7fc;
+  border-radius: 5px;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+/* 抽屉下拉动画与只读会话 */
+@keyframes drawerDrop {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.drawer {
+  animation: drawerDrop 0.26s ease-out;
+}
+.composer.readonly {
+  border: 1px dashed #e2d7e9;
+  border-radius: 6px;
+  padding: 14px 16px;
+  margin-top: 12px;
+  background: #fbf9fc;
+}
+.conversations .row.active {
+  background: var(--light);
+}
+.conversations a.row {
+  text-decoration: none;
+  color: inherit;
+}
+@media (max-width: 1050px) {
+  .person-grid {
+    grid-template-columns: 1fr;
+  }
+  .footbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
