@@ -1,5 +1,30 @@
 # CampusCrew / Campus Match
 
+## Windows / Conda 快速启动
+
+在项目根目录执行（需要 Node.js 22.12+）：
+
+```powershell
+conda env create --prefix .conda --file environment.yml
+.\.conda\python.exe -m pip install -r backend\requirements-dev.txt
+Push-Location backend
+..\.conda\python.exe -m app.seed
+..\.conda\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+另开一个 PowerShell 窗口，在项目根目录执行：
+
+```powershell
+Push-Location frontend
+npm.cmd ci
+npm.cmd run dev
+```
+
+访问 <http://127.0.0.1:5173/>，API 文档位于 <http://127.0.0.1:8000/docs>。
+如 Vite 在受限目录下加载配置或预构建依赖时报权限错误，可运行
+`npm.cmd run build -- --configLoader runner`，再运行
+`npm.cmd run preview -- --configLoader runner` 来预览构建结果。
+
 校园组队平台的初版代码，技术栈为 **React + TypeScript + FastAPI + SQLite**。
 页面沿用 `static-page-complete/dist` 当前静态原型的布局和样式；原型独立保留，不参与应用运行。
 

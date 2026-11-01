@@ -4,6 +4,12 @@ dist/
 !static-page-complete/dist/
 !static-page-complete/dist/**
 .venv/
+.conda/
+.conda-pkgs/
+.npm-cache/
+.pip-cache/
+.pytest-temp/
+.run/
 __pycache__/
 .pytest_cache/
 *.pyc
