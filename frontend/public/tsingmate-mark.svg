@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 330" role="img" aria-labelledby="title">
+  <title id="title">TsingMate 标识</title>
+  <defs>
+    <linearGradient id="left" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#8732d6"/>
+      <stop offset="1" stop-color="#7227c4"/>
+    </linearGradient>
+    <linearGradient id="right" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#ad65ee"/>
+      <stop offset="1" stop-color="#9950e2"/>
+    </linearGradient>
+  </defs>
+  <circle cx="130" cy="42" r="42" fill="url(#left)"/>
+  <circle cx="410" cy="42" r="42" fill="url(#right)"/>
+  <path d="M492 278 412 148 270 256" fill="none" stroke="url(#right)" stroke-width="96" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M48 278 128 148 270 256 374 172" fill="none" stroke="url(#left)" stroke-width="96" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

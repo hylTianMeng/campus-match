@@ -14,7 +14,7 @@ export function Auth() {
     [busy, setBusy] = useState(false);
   return (
     <div className="panel auth-panel">
-      <Header title="欢迎回到 CampusCrew" sub="用校园身份，找到同行伙伴。" />
+      <Header title="欢迎回到 TsingMate" sub="用校园身份，找到同行伙伴。" />
       <form
         onSubmit={async (e) => {
           e.preventDefault();

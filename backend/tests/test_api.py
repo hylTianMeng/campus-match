@@ -129,6 +129,40 @@ def test_custom_information_and_multiple_attachments(client):
     assert client.patch(f"/api/posts/{post['id']}", json=edited).status_code == 422
 
 
+def test_partial_post_edit_preserves_omitted_fields_and_attachments(client):
+    login(client, "chen")
+    upload = client.post("/api/attachments", json={
+        "filename": "资料.txt", "content_base64": base64.b64encode(b"keep me").decode(),
+    })
+    attachment_id = upload.json()["id"]
+    legacy_id = client.post("/api/attachments", json={
+        "filename": "说明.txt", "content_base64": base64.b64encode(b"legacy file").decode(),
+    }).json()["id"]
+    post = new_post(client, (2,))
+    path = f"/api/posts/{post['id']}"
+    details = client.patch(path, json={
+        "title": post["title"], "description": post["description"],
+        "place": "图书馆", "tags": ["协作"],
+        "extras": {"items": [{"title": "资料", "type": "attachment", "attachment_id": attachment_id}]},
+        "attachment_id": legacy_id,
+    })
+    assert details.status_code == 200, details.text
+    updated = client.patch(path, json={"title": post["title"], "description": "更新说明"})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["place"] == "图书馆"
+    assert updated.json()["tags"] == ["协作"]
+    assert updated.json()["extras"] == details.json()["extras"]
+    assert updated.json()["attachment"]["id"] == legacy_id
+    assert client.get(f"{path}/attachments/{attachment_id}").content == b"keep me"
+    assert client.get(f"{path}/attachment").content == b"legacy file"
+    assert client.post(f"{path}/end", json={}).status_code == 200
+    ended = client.patch(path, json={"title": post["title"], "description": "截止后更正"})
+    assert ended.status_code == 200, ended.text
+    assert ended.json()["place"] == "图书馆"
+    assert ended.json()["tags"] == ["协作"]
+    assert ended.json()["extras"] == details.json()["extras"]
+
+
 def apply(client, post, role=0):
     response = client.post(
         f"/api/posts/{post['id']}/applications",

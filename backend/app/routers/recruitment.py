@@ -37,11 +37,15 @@ def attachment_for_post(db, attachment_id, user, post_id=None):
 
 
 def information_attachment_ids(extras):
-    return [item.attachment_id for item in extras.items if item.type == "attachment"]
+    items = extras.get("items", []) if isinstance(extras, dict) else extras.items
+    return [
+        item["attachment_id"] if isinstance(item, dict) else item.attachment_id
+        for item in items if (item.get("type") if isinstance(item, dict) else item.type) == "attachment"
+    ]
 
 
-def validate_attachments(db, data, user, post_id=None, legacy_id=None):
-    ids = information_attachment_ids(data.extras)
+def validate_attachments(db, extras, user, post_id=None, legacy_id=None):
+    ids = information_attachment_ids(extras)
     if legacy_id is not None:
         ids.append(legacy_id)
     if len(ids) != len(set(ids)):
@@ -200,7 +204,7 @@ def create(data: PostCreate, user=Depends(student), db=Depends(get_db)):
         ).fetchone()
     ):
         raise HTTPException(404, "草稿不存在")
-    attachment_ids = validate_attachments(db, data, user, legacy_id=data.attachment_id)
+    attachment_ids = validate_attachments(db, data.extras, user, legacy_id=data.attachment_id)
     created_at = now()
     post_id = db.execute(
         "INSERT INTO posts(owner_id,title,category,description,tags,place,deadline,event_time,extras,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
@@ -245,9 +249,13 @@ def create(data: PostCreate, user=Depends(student), db=Depends(get_db)):
 def edit(post_id: int, data: PostEdit, user=Depends(student), db=Depends(get_db)):
     post = require_post(db, post_id)
     require_owner(post, user)
+    fields = data.model_fields_set
+    place = data.place if "place" in fields else post["place"]
+    tags = data.tags if "tags" in fields else json.loads(post["tags"])
+    extras = data.extras if "extras" in fields else json.loads(post["extras"])
     if post["status"] == "ended":
-        if (data.title != post["title"] or data.place != post["place"]
-            or data.tags != json.loads(post["tags"])
+        if (data.title != post["title"] or place != post["place"]
+            or tags != json.loads(post["tags"])
             or any(getattr(data, key) is not None for key in ("category", "deadline", "event_time", "roles"))):
             raise HTTPException(409, "已结束招募仅可修正说明、联系方式和补充资料")
     if data.category is not None and not db.execute("SELECT 1 FROM categories WHERE name=?", (data.category,)).fetchone():
@@ -293,7 +301,7 @@ def edit(post_id: int, data: PostEdit, user=Depends(student), db=Depends(get_db)
             db.execute("UPDATE posts SET status='ended',end_reason='filled' WHERE id=?", (post_id,))
             notify(db, user["id"], "全部岗位已满，招募结束，结果已锁定。", post_id)
     event_time = data.event_time if data.event_time is not None else post["event_time"]
-    if data.place != post["place"] or event_time != post["event_time"] or deadline != post["deadline"]:
+    if place != post["place"] or event_time != post["event_time"] or deadline != post["deadline"]:
         for row in db.execute("SELECT DISTINCT user_id FROM applications WHERE post_id=? AND status IN ('pending','accepted')", (post_id,)):
             notify(db, row["user_id"], "活动时间、地点或招募截止时间已变更，请查看最新安排。", post_id)
     old_attachment = legacy_attachment(db, post)
@@ -301,7 +309,7 @@ def edit(post_id: int, data: PostEdit, user=Depends(student), db=Depends(get_db)
         data.attachment_id if "attachment_id" in data.model_fields_set
         else old_attachment["id"] if old_attachment else None
     )
-    attachment_ids = validate_attachments(db, data, user, post_id, attachment_id)
+    attachment_ids = validate_attachments(db, extras, user, post_id, attachment_id)
     for row in db.execute("SELECT id FROM attachments WHERE post_id=?", (post_id,)).fetchall():
         if row["id"] not in attachment_ids:
             db.execute("DELETE FROM attachments WHERE id=?", (row["id"],))
@@ -314,9 +322,9 @@ def edit(post_id: int, data: PostEdit, user=Depends(student), db=Depends(get_db)
         (
             data.title,
             data.description,
-            data.place,
-            json.dumps(data.tags, ensure_ascii=False),
-            data.extras.model_dump_json(),
+            place,
+            json.dumps(tags, ensure_ascii=False),
+            extras.model_dump_json() if "extras" in fields else post["extras"],
             now(),
             data.category if data.category is not None else post["category"],
             deadline,

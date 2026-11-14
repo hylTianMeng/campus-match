@@ -30,7 +30,7 @@ export function Header({
   return (
     <div className="pagehead">
       <div>
-        <div className="eyebrow">CAMPUSCREW / TSINGHUA CAMPUS</div>
+        <div className="eyebrow">TSINGMATE / TSINGHUA CAMPUS</div>
         <h1>{title}</h1>
         <p>{sub}</p>
       </div>

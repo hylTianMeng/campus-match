@@ -107,24 +107,21 @@ small,
   align-items: center;
   white-space: nowrap;
 }
-.seal {
-  width: 41px;
-  height: 45px;
-  display: grid;
-  place-items: center;
-  color: var(--p);
-  border: 1px solid var(--p);
-  font:
-    26px 'SimSun',
-    serif;
-  border-radius: 50% 50% 5px 5px;
+.brand-mark {
+  width: 46px;
+  height: 46px;
+  flex: none;
+  object-fit: contain;
 }
 .brand strong {
   display: block;
-  font:
-    23px Georgia,
-    serif;
-  color: var(--p);
+  font: 700 23px Arial, sans-serif;
+  color: #241153;
+}
+.brand strong span {
+  background: linear-gradient(110deg, #8732d6, #a456e6);
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 .brand small {
   display: block;
@@ -766,10 +763,8 @@ td .btn {
 .adminside .brand {
   margin-bottom: 45px;
 }
-.adminside .brand strong,
-.adminside .seal {
+.adminside .brand strong {
   color: white;
-  border-color: #b499bd;
 }
 .adminside a.menu {
   display: block;

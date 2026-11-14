@@ -13,9 +13,9 @@ export function Layout() {
     <>
       <header className="topbar">
         <Link className="brand" to="/discover">
-          <span className="seal">紫</span>
+          <img className="brand-mark" src="/tsingmate-mark.svg" alt="" />
           <span>
-            <strong>CampusCrew</strong>
+            <strong>Tsing<span>Mate</span></strong>
             <small>清华大学校园组队</small>
           </span>
         </Link>

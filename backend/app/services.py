@@ -23,23 +23,26 @@ def require_open(post):
         raise HTTPException(409, "招募已结束，结果已锁定")
 
 
-def legacy_attachment(db, post):
+def legacy_attachment(db, post, attachments=None):
     custom_ids = {item.get("attachment_id") for item in json.loads(post["extras"]).get("items", [])}
-    return next((row for row in db.execute(
-        "SELECT id,filename,length(content) AS size FROM attachments WHERE post_id=? ORDER BY id",
-        (post["id"],),
-    ) if row["id"] not in custom_ids), None)
+    if attachments is None:
+        attachments = db.execute(
+            "SELECT id,filename,length(content) AS size FROM attachments WHERE post_id=? ORDER BY id",
+            (post["id"],),
+        )
+    return next((row for row in attachments if row["id"] not in custom_ids), None)
 
 
 def post_view(db, post, viewer=None):
     result = dict(post)
     result["tags"] = json.loads(post["tags"])
     result["extras"] = json.loads(post["extras"])
-    attachment = legacy_attachment(db, post)
-    result["attachments"] = [dict(row) for row in db.execute(
+    attachments = [dict(row) for row in db.execute(
         "SELECT id,filename,length(content) AS size FROM attachments WHERE post_id=? ORDER BY id",
         (post["id"],),
     )]
+    attachment = legacy_attachment(db, post, attachments)
+    result["attachments"] = attachments
     result["attachment"] = dict(attachment) if attachment else None
     owner = db.execute("SELECT * FROM users WHERE id=?", (post["owner_id"],)).fetchone()
     result["owner"] = (

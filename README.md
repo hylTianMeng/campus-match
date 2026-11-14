@@ -1,4 +1,4 @@
-# CampusCrew / Campus Match
+# TsingMate / Campus Match
 
 开发协作遵循 [AGENTS.md](AGENTS.md)：按当前任务读取相关代码，采用针对性验证。`doc/` 是可能过时的历史参考，按需查阅，不要求通读或逐份同步；阅读入口见 [doc/README.md](doc/README.md)。
 
