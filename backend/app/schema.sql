@@ -1,12 +1,15 @@
 CREATE TABLE IF NOT EXISTS schema_version(version INTEGER PRIMARY KEY);
-INSERT OR IGNORE INTO schema_version VALUES(1);
+INSERT OR IGNORE INTO schema_version VALUES(2);
 CREATE TABLE IF NOT EXISTS users(
  id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
  name TEXT NOT NULL, dept TEXT NOT NULL DEFAULT '', year TEXT NOT NULL DEFAULT '',
  bio TEXT NOT NULL DEFAULT '', tags TEXT NOT NULL DEFAULT '[]',
  verified INTEGER NOT NULL DEFAULT 0, banned INTEGER NOT NULL DEFAULT 0,
  searchable INTEGER NOT NULL DEFAULT 1, public_posts INTEGER NOT NULL DEFAULT 1,
- public_teams INTEGER NOT NULL DEFAULT 0
+ public_teams INTEGER NOT NULL DEFAULT 0,
+ avatar_path TEXT NOT NULL DEFAULT '',
+ is_admin INTEGER NOT NULL DEFAULT 0,
+ deleted_at TEXT
 );
 CREATE TABLE IF NOT EXISTS sessions(
  token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -65,3 +68,25 @@ CREATE TABLE IF NOT EXISTS messages(
  CHECK(sender_id<>recipient_id)
 );
 CREATE INDEX IF NOT EXISTS inbox ON messages(recipient_id,sender_id,id);
+
+CREATE TABLE IF NOT EXISTS email_codes(
+ id INTEGER PRIMARY KEY,
+ email TEXT NOT NULL,
+ purpose TEXT NOT NULL CHECK(purpose IN ('verify','reset')),
+ code_hash TEXT NOT NULL,
+ user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+ expires_at TEXT NOT NULL,
+ attempts INTEGER NOT NULL DEFAULT 0,
+ consumed INTEGER NOT NULL DEFAULT 0,
+ created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS email_code_lookup ON email_codes(email, purpose, consumed);
+
+CREATE TABLE IF NOT EXISTS admin_actions(
+ id INTEGER PRIMARY KEY,
+ admin_id INTEGER NOT NULL REFERENCES users(id),
+ target_user_id INTEGER NOT NULL REFERENCES users(id),
+ action TEXT NOT NULL CHECK(action IN ('ban','unban')),
+ reason TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL
+);

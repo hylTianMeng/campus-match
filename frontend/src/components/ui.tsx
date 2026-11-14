@@ -52,6 +52,22 @@ export function Tags({ values = [] }: { values?: string[] }) {
 export function Badge({ children, color = '' }: { children: ReactNode; color?: string }) {
   return <span className={'badge ' + color}>{children}</span>;
 }
+export function Avatar({
+  name,
+  url,
+  className = '',
+}: {
+  name: string;
+  url?: string | null;
+  className?: string;
+}) {
+  if (url) {
+    return (
+      <img className={'avatar ' + className} src={url} alt={name} referrerPolicy="no-referrer" />
+    );
+  }
+  return <span className={'avatar ' + className}>{name[0]}</span>;
+}
 export function Empty({
   title = '这里还没有记录',
   children,

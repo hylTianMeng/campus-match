@@ -13,6 +13,38 @@ class Login(Input):
     password: str = Field(min_length=1, max_length=200)
 
 
+class Register(Input):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=8, max_length=200)
+    name: str = Field(min_length=1, max_length=40)
+
+
+class VerifyCode(Input):
+    code: str = Field(pattern=r"^\d{6}$")
+
+
+class ResetRequest(Input):
+    email: str = Field(min_length=3, max_length=254)
+
+
+class ResetPassword(Input):
+    email: str = Field(min_length=3, max_length=254)
+    code: str = Field(pattern=r"^\d{6}$")
+    password: str = Field(min_length=8, max_length=200)
+
+
+class DeleteAccount(Input):
+    password: str = Field(min_length=1, max_length=200)
+
+
+class BanUser(Input):
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class UnbanUser(Input):
+    reason: str = Field(default="", max_length=1000)
+
+
 class Profile(Input):
     name: str = Field(min_length=1, max_length=40)
     dept: str = Field(default="", max_length=80)

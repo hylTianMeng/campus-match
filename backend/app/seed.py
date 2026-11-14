@@ -3,8 +3,10 @@
 import json
 import os
 from datetime import datetime, timezone, timedelta
-from .db import init_db, connect, now
+from .db import init_db, connect, now, WRITE_LOCK
 from .auth import hash_password
+
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "lin@example.test")
 
 CATEGORIES = ["学科竞赛", "课程项目", "学术科研", "兴趣活动", "公益实践"]
 TITLES = [
@@ -153,13 +155,16 @@ def seed_showcase(db):
 def seed():
     init_db()
     db = connect()
+    WRITE_LOCK.acquire()
     try:
         db.execute("BEGIN IMMEDIATE")
         for name in CATEGORIES:
             db.execute("INSERT OR IGNORE INTO categories(name) VALUES(?)", (name,))
         if db.execute("SELECT 1 FROM users").fetchone():
+            # 幂等提权：无论新库还是老库，都确保开发库始终有管理员。
+            db.execute("UPDATE users SET is_admin=1 WHERE email=?", (ADMIN_EMAIL,))
             db.commit()
-            print("已有用户，跳过演示账号与招募；分类已同步。")
+            print("已有用户，跳过演示账号与招募；分类与管理员已同步。")
             return
         password = os.getenv("SEED_PASSWORD", "CampusCrew-Dev-2026")
         for name, email, dept, tags in [
@@ -195,6 +200,7 @@ def seed():
                     json.dumps(tags, ensure_ascii=False),
                 ),
             )
+        db.execute("UPDATE users SET is_admin=1 WHERE email=?", (ADMIN_EMAIL,))
         for i, title in enumerate(TITLES):
             created_at = now()
             deadline = (
@@ -251,6 +257,7 @@ def seed():
         raise
     finally:
         db.close()
+        WRITE_LOCK.release()
 
 
 if __name__ == "__main__":

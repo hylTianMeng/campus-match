@@ -4,6 +4,10 @@ import { Layout, PersonalLayout } from './components/Layout';
 import { Guard, Empty } from './components/ui';
 import { Discover } from './pages/Discover';
 import { Auth } from './pages/Auth';
+import { Register } from './pages/Register';
+import { Verify } from './pages/Verify';
+import { Forgot } from './pages/Forgot';
+import { Admin } from './pages/Admin';
 import { Detail } from './pages/Detail';
 import { Publish } from './pages/Publish';
 import { Posts, Drafts, Applications, Favorites } from './pages/Manage';
@@ -19,6 +23,24 @@ export default function App() {
             <Route index element={<Navigate to="/discover" replace />} />
             <Route path="discover" element={<Discover />} />
             <Route path="auth" element={<Auth />} />
+            <Route path="register" element={<Register />} />
+            <Route path="forgot" element={<Forgot />} />
+            <Route
+              path="verify"
+              element={
+                <Guard>
+                  <Verify />
+                </Guard>
+              }
+            />
+            <Route
+              path="admin"
+              element={
+                <Guard>
+                  <Admin />
+                </Guard>
+              }
+            />
             <Route path="detail/:id" element={<Detail />} />
             <Route
               path="publish"

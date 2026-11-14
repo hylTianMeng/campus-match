@@ -6,7 +6,7 @@ from pathlib import PurePath
 from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
-from ..db import get_db, now, notify
+from ..db import get_db, get_db_readonly, now, notify
 from ..auth import optional_user, current_user, student
 from ..schemas import PostCreate, PostEdit, ApplicationCreate, Decision, Draft, AttachmentUpload
 from ..services import require_post, require_owner, require_open, post_view, decide, legacy_attachment, transition
@@ -131,7 +131,7 @@ def download_attachment(post_id: int, attachment_id: int | None = None, db=Depen
 
 
 @router.get("/categories")
-def categories(db=Depends(get_db)):
+def categories(db=Depends(get_db_readonly)):
     return [r["name"] for r in db.execute("SELECT name FROM categories ORDER BY id")]
 
 
@@ -154,13 +154,16 @@ def posts(
     limit: int = Query(100, ge=1, le=100),
     offset: int = Query(0, ge=0),
     user=Depends(optional_user),
-    db=Depends(get_db),
+    db=Depends(get_db_readonly),
 ):
     order = (
         "p.deadline ASC,p.id DESC"
         if sort == "deadline"
         else "p.created_at DESC,p.id DESC"
     )
+    # 需求变更（待与组长确认）：关闭「公开我的发布」后，该用户的招募从大厅公开列表隐藏；
+    # 管理员（is_admin=1）仍能看到全部招募，隐私设置不影响管理员权限。
+    is_admin = user["is_admin"] if user else 0
     # Rank tag matches before applying pagination; category only filters results.
     relevance = (
         "CASE WHEN EXISTS (SELECT 1 FROM json_each(p.tags) WHERE lower(value)=lower(?)) THEN 0 "
@@ -168,12 +171,12 @@ def posts(
         "ELSE 2 END,"
         if q else ""
     )
-    parameters = [category, category, tag, tag, q, q]
+    parameters = [is_admin, category, category, tag, tag, q, q]
     if q:
         parameters.extend([q, q])
     parameters.extend([limit, offset])
     rows = db.execute(
-        "SELECT p.* FROM posts p JOIN users u ON u.id=p.owner_id WHERE p.status='open' AND u.banned=0 AND (?='' OR p.category=?) AND (?='' OR EXISTS (SELECT 1 FROM json_each(p.tags) WHERE lower(value)=lower(?))) AND (?='' OR instr(lower(p.title || p.category || p.description || p.tags),lower(?))>0) ORDER BY "
+        "SELECT p.* FROM posts p JOIN users u ON u.id=p.owner_id WHERE p.status='open' AND u.banned=0 AND (u.public_posts=1 OR ?=1) AND (?='' OR p.category=?) AND (?='' OR EXISTS (SELECT 1 FROM json_each(p.tags) WHERE lower(value)=lower(?))) AND (?='' OR instr(lower(p.title || p.category || p.description || p.tags),lower(?))>0) ORDER BY "
         + relevance + order
         + " LIMIT ? OFFSET ?",
         parameters,
@@ -182,11 +185,18 @@ def posts(
 
 
 @router.get("/posts/{post_id}")
-def detail(post_id: int, user=Depends(optional_user), db=Depends(get_db)):
+def detail(post_id: int, user=Depends(optional_user), db=Depends(get_db_readonly)):
     post = require_post(db, post_id)
-    if db.execute(
-        "SELECT banned FROM users WHERE id=?", (post["owner_id"],)
-    ).fetchone()[0]:
+    owner = db.execute(
+        "SELECT banned, public_posts FROM users WHERE id=?", (post["owner_id"],)
+    ).fetchone()
+    if owner["banned"]:
+        raise HTTPException(404, "此内容暂不可查看")
+    # 需求变更（待与组长确认）：关闭「公开我的发布」后，非本人、非管理员访问详情返回 404（隐藏）；
+    # 本人（owner）与管理员（is_admin=1）仍可访问，隐私设置不影响管理员权限。
+    is_admin = bool(user and user["is_admin"])
+    is_owner = bool(user and user["id"] == post["owner_id"])
+    if not owner["public_posts"] and not is_admin and not is_owner:
         raise HTTPException(404, "此内容暂不可查看")
     return post_view(db, post, user)
 
@@ -392,7 +402,7 @@ def end(post_id: int, user=Depends(student), db=Depends(get_db)):
 
 
 @router.get("/me/posts")
-def mine(user=Depends(current_user), db=Depends(get_db)):
+def mine(user=Depends(current_user), db=Depends(get_db_readonly)):
     return [
         post_view(db, p, user)
         for p in db.execute(
@@ -477,13 +487,13 @@ def application_rows(db, where, args):
 
 
 @router.get("/posts/{post_id}/applications")
-def applicants(post_id: int, user=Depends(current_user), db=Depends(get_db)):
+def applicants(post_id: int, user=Depends(current_user), db=Depends(get_db_readonly)):
     require_owner(require_post(db, post_id), user)
     return application_rows(db, "a.post_id=?", (post_id,))
 
 
 @router.get("/me/applications")
-def my_applications(user=Depends(current_user), db=Depends(get_db)):
+def my_applications(user=Depends(current_user), db=Depends(get_db_readonly)):
     return application_rows(db, "a.user_id=?", (user["id"],))
 
 
@@ -494,7 +504,7 @@ def decision(app_id: int, data: Decision, user=Depends(student), db=Depends(get_
 
 
 @router.get("/me/favorites")
-def favorites(user=Depends(current_user), db=Depends(get_db)):
+def favorites(user=Depends(current_user), db=Depends(get_db_readonly)):
     return [
         post_view(db, p, user)
         for p in db.execute(
@@ -520,7 +530,7 @@ def unfavorite(post_id: int, user=Depends(student), db=Depends(get_db)):
 
 
 @router.get("/drafts")
-def drafts(user=Depends(current_user), db=Depends(get_db)):
+def drafts(user=Depends(current_user), db=Depends(get_db_readonly)):
     return [
         {**dict(d), "payload": json.loads(d["payload"])}
         for d in db.execute(

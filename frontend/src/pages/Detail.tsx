@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useData, write } from '../api';
 import { useSession } from '../context';
 import type { Post, Role } from '../types';
-import { Badge, Tags, LoadState, Modal, Field, ErrorNote, SafeLink, date } from '../components/ui';
+import { Badge, Tags, LoadState, Modal, Field, ErrorNote, SafeLink, date, Avatar } from '../components/ui';
 const extras = [
   ['contact', '招募者联系方式'],
   ['eventIntro', '赛事 / 活动介绍'],
@@ -132,7 +132,7 @@ export function Detail() {
         <aside>
           <div className="panel">
             <div className="actions">
-              <span className="avatar lg">{post.owner.name[0]}</span>
+              <Avatar name={post.owner.name} url={post.owner.avatar_url} className="lg" />
               <div>
                 <h3>{post.owner.name}</h3>
                 <p className="small">

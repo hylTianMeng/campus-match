@@ -2,6 +2,7 @@ import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useEffect } from 'react';
 import { useSession } from '../context';
 import { useData } from '../api';
+import { Avatar } from './ui';
 export function Layout() {
   const { user } = useSession();
   const { pathname } = useLocation();
@@ -49,12 +50,17 @@ export function Layout() {
                 </svg>
                 {!!data?.total && <span className="num">{data.total}</span>}
               </Link>
-              <Link className="avatar" to="/profile" aria-label="个人资料">
-                {user.name[0]}
+              <Link to="/profile" aria-label="个人资料">
+                <Avatar name={user.name} url={user.avatar_url} />
               </Link>
               <Link className="name" to="/profile">
                 {user.name}
               </Link>
+              {user.is_admin && (
+                <Link className="btn secondary" to="/admin">
+                  后台
+                </Link>
+              )}
             </>
           ) : (
             <Link className="btn secondary" to="/auth">
@@ -83,7 +89,7 @@ export function PersonalLayout() {
     <div className="side-layout">
       <aside className="sidemenu">
         <div className="profilemini">
-          <span className="avatar">{user?.name[0]}</span>
+          <Avatar name={user?.name ?? ''} url={user?.avatar_url} />
           <b>{user?.name}</b>
         </div>
         {links.map(([path, title]) => (
@@ -91,6 +97,7 @@ export function PersonalLayout() {
             {title}
           </NavLink>
         ))}
+        {user?.is_admin && <NavLink to="/admin">后台管理</NavLink>}
       </aside>
       <section>
         <Outlet />

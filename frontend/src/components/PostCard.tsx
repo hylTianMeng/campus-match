@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import type { Post } from '../types';
-import { Tags, Badge } from './ui';
+import { Tags, Badge, Avatar } from './ui';
 export function PostCard({ post }: { post: Post }) {
   const accepted = post.roles.reduce((n, r) => n + r.accepted, 0),
     total = post.roles.reduce((n, r) => n + r.capacity, 0);
@@ -45,7 +45,7 @@ export function PostCard({ post }: { post: Post }) {
       </div>
       <div className="cardfoot">
         <span>
-          <span className="avatar">{post.owner.name[0]}</span> {post.owner.name}
+          <Avatar name={post.owner.name} url={post.owner.avatar_url} /> {post.owner.name}
         </span>
         <Link className="link" to={'/detail/' + post.id}>
           查看招募 ↗

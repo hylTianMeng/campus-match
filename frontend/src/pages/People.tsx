@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useData } from '../api';
 import type { Person, Post } from '../types';
 import { useSession } from '../context';
-import { Header, Tags, LoadState, Empty, Badge } from '../components/ui';
+import { Header, Tags, LoadState, Empty, Badge, Avatar } from '../components/ui';
 import { PostCard } from '../components/PostCard';
 export function People() {
   const [name, setName] = useState(''),
@@ -53,7 +53,7 @@ export function People() {
         {data.data?.map((p) => (
           <article className="card" key={p.id}>
             <div className="actions">
-              <span className="avatar lg">{p.name[0]}</span>
+              <Avatar name={p.name} url={p.avatar_url} className="lg" />
               <div>
                 <h3>{p.name}</h3>
                 <p>
@@ -98,7 +98,7 @@ export function PersonPage() {
       />
       <div className="panel">
         <div className="actions">
-          <span className="avatar lg">{p.name[0]}</span>
+          <Avatar name={p.name} url={p.avatar_url} className="lg" />
           <div className="grow">
             <h1>{p.name}</h1>
             <p>
@@ -117,7 +117,6 @@ export function PersonPage() {
       <div className="person-grid">
         {[
           ['posts', '发布的招募', p.public_posts],
-          ['apps', '申请记录', false],
           ['teams', '组队历史', p.public_teams],
         ].map(([key, title, visible]) => (
           <div className="panel" key={String(key)}>

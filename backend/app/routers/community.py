@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from ..db import get_db, now
+from ..db import get_db, get_db_readonly, now
 from ..auth import current_user, student, public_user
 from ..schemas import Message
 from ..services import post_view
@@ -15,7 +15,7 @@ def verified_viewer(user=Depends(current_user)):
 
 @router.get("/people")
 def people(
-    q: str = "", tag: str = "", user=Depends(verified_viewer), db=Depends(get_db)
+    q: str = "", tag: str = "", user=Depends(verified_viewer), db=Depends(get_db_readonly)
 ):
     return [
         public_user(r)
@@ -27,7 +27,7 @@ def people(
 
 
 @router.get("/people/{person_id}")
-def person(person_id: int, user=Depends(verified_viewer), db=Depends(get_db)):
+def person(person_id: int, user=Depends(verified_viewer), db=Depends(get_db_readonly)):
     person = db.execute(
         "SELECT * FROM users WHERE id=? AND verified=1 AND banned=0", (person_id,)
     ).fetchone()
@@ -59,7 +59,7 @@ def person(person_id: int, user=Depends(verified_viewer), db=Depends(get_db)):
 
 
 @router.get("/notices")
-def notices(user=Depends(current_user), db=Depends(get_db)):
+def notices(user=Depends(current_user), db=Depends(get_db_readonly)):
     return [
         dict(r)
         for r in db.execute(
@@ -76,7 +76,7 @@ def read_notices(user=Depends(current_user), db=Depends(get_db)):
 
 
 @router.get("/unread")
-def unread(user=Depends(current_user), db=Depends(get_db)):
+def unread(user=Depends(current_user), db=Depends(get_db_readonly)):
     messages = db.execute(
         "SELECT count(*) FROM messages WHERE recipient_id=? AND is_read=0",
         (user["id"],),
@@ -88,7 +88,7 @@ def unread(user=Depends(current_user), db=Depends(get_db)):
 
 
 @router.get("/conversations")
-def conversations(user=Depends(current_user), db=Depends(get_db)):
+def conversations(user=Depends(current_user), db=Depends(get_db_readonly)):
     ids = db.execute(
         "SELECT DISTINCT CASE WHEN sender_id=? THEN recipient_id ELSE sender_id END AS peer FROM messages WHERE sender_id=? OR recipient_id=?",
         (user["id"], user["id"], user["id"]),
@@ -111,7 +111,7 @@ def messages(
     peer_id: int,
     after: int = Query(0, ge=0),
     user=Depends(current_user),
-    db=Depends(get_db),
+    db=Depends(get_db_readonly),
 ):
     return [
         dict(r)

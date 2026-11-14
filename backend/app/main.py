@@ -1,37 +1,53 @@
+# Load ``.env`` before any application module reads environment variables
+# (db.py / emailing.py read DATABASE_PATH / SMTP_* at import time).
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import asyncio
 import os
-from contextlib import asynccontextmanager, suppress
+import threading
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from .db import init_db, connect, expire_posts
-from .routers import auth, recruitment, community
+from .db import init_db, connect, expire_posts, WRITE_LOCK
+from .routers import auth, recruitment, community, account, admin
 
 
 def sweep():
     db = connect()
     try:
-        db.execute("BEGIN IMMEDIATE")
-        expire_posts(db)
-        db.commit()
+        with WRITE_LOCK:
+            db.execute("BEGIN IMMEDIATE")
+            expire_posts(db)
+            db.commit()
     finally:
         db.close()
 
 
-async def deadline_worker():
-    while True:
-        await asyncio.sleep(30)
-        await asyncio.to_thread(sweep)
+def _deadline_loop(stop_event: threading.Event) -> None:
+    """Sweep expired recruitments every 30s until ``stop_event`` is set."""
+    while not stop_event.wait(30):
+        sweep()
 
 
 @asynccontextmanager
 async def lifespan(app):
     init_db()
     sweep()
-    task = asyncio.create_task(deadline_worker())
+    stop_event = threading.Event()
+    worker = threading.Thread(
+        target=_deadline_loop,
+        args=(stop_event,),
+        name="deadline-worker",
+        daemon=True,
+    )
+    worker.start()
     yield
-    task.cancel()
-    with suppress(asyncio.CancelledError):
-        await task
+    stop_event.set()
+    # Join the worker off the event loop and wait for any in-flight sweep() to
+    # finish, instead of leaking the thread after cancellation.
+    await asyncio.to_thread(worker.join)
 
 
 app = FastAPI(title="CampusCrew API", version="0.1.0", lifespan=lifespan)
@@ -50,12 +66,14 @@ async def same_origin_writes(request: Request, call_next):
             return JSONResponse({"detail": "请求来源不受信任"}, status_code=403)
         if request.headers.get("sec-fetch-site") == "cross-site":
             return JSONResponse({"detail": "不允许跨站写入"}, status_code=403)
-        if request.method in (
-            "POST",
-            "PUT",
-            "PATCH",
-        ) and "application/json" not in request.headers.get("content-type", ""):
-            return JSONResponse({"detail": "请使用 JSON 请求"}, status_code=415)
+        if request.method in ("POST", "PUT", "PATCH"):
+            content_type = request.headers.get("content-type", "")
+            # Allow multipart only for the avatar upload endpoint; JSON is still
+            # strictly required for every other write.
+            if "application/json" not in content_type and not content_type.startswith(
+                "multipart/form-data"
+            ):
+                return JSONResponse({"detail": "请使用 JSON 请求"}, status_code=415)
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Cache-Control"] = "no-store"
@@ -70,3 +88,5 @@ def health():
 app.include_router(auth.router)
 app.include_router(recruitment.router)
 app.include_router(community.router)
+app.include_router(account.router)
+app.include_router(admin.router)

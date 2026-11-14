@@ -18,30 +18,8 @@ router = APIRouter(prefix="/api/auth", tags=["账户"])
 DUMMY_HASH = hash_password("constant-time-fallback")
 
 
-@router.post("/login")
-def login(data: Login, response: Response, db=Depends(get_db)):
-    email = data.email.lower()
-    attempt = db.execute(
-        "SELECT * FROM login_attempts WHERE email=?", (email,)
-    ).fetchone()
-    if attempt and attempt["reset_at"] > now() and attempt["attempts"] >= 10:
-        raise HTTPException(429, "尝试次数过多，请 15 分钟后再试")
-    user = db.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
-    valid = verify_password(
-        data.password, user["password_hash"] if user else DUMMY_HASH
-    )
-    if not user or not valid:
-        reset = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
-        count = (
-            attempt["attempts"] + 1 if attempt and attempt["reset_at"] > now() else 1
-        )
-        db.execute(
-            "INSERT OR REPLACE INTO login_attempts VALUES(?,?,?)",
-            (email, count, attempt["reset_at"] if count > 1 else reset),
-        )
-        db.commit()  # Persist failed attempts even though the request raises.
-        raise HTTPException(401, "邮箱或密码错误")
-    db.execute("DELETE FROM login_attempts WHERE email=?", (email,))
+def start_session(db, response: Response, user):
+    """Create a session row and set the httponly session cookie for a user."""
     token = secrets.token_urlsafe(32)
     expires = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
     db.execute("DELETE FROM sessions WHERE expires_at<=?", (now(),))
@@ -57,6 +35,35 @@ def login(data: Login, response: Response, db=Depends(get_db)):
         max_age=604800,
         path="/",
     )
+
+
+@router.post("/login")
+def login(data: Login, response: Response, db=Depends(get_db)):
+    email = data.email.lower()
+    attempt = db.execute(
+        "SELECT * FROM login_attempts WHERE email=?", (email,)
+    ).fetchone()
+    if attempt and attempt["reset_at"] > now() and attempt["attempts"] >= 10:
+        raise HTTPException(429, "尝试次数过多，请 15 分钟后再试")
+    user = db.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+    if user and user["deleted_at"]:
+        raise HTTPException(401, "该账号已注销")
+    valid = verify_password(
+        data.password, user["password_hash"] if user else DUMMY_HASH
+    )
+    if not user or not valid:
+        reset = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+        count = (
+            attempt["attempts"] + 1 if attempt and attempt["reset_at"] > now() else 1
+        )
+        db.execute(
+            "INSERT OR REPLACE INTO login_attempts VALUES(?,?,?)",
+            (email, count, attempt["reset_at"] if count > 1 else reset),
+        )
+        db.commit()  # Persist failed attempts even though the request raises.
+        raise HTTPException(401, "邮箱或密码错误")
+    db.execute("DELETE FROM login_attempts WHERE email=?", (email,))
+    start_session(db, response, user)
     return own_user(user)
 
 

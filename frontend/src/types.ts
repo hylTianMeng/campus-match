@@ -5,6 +5,7 @@ export interface Person {
   year?: string;
   bio?: string;
   tags?: string[];
+  avatar_url?: string | null;
 }
 export interface User extends Person {
   email: string;
@@ -13,6 +14,8 @@ export interface User extends Person {
   searchable: boolean;
   public_posts: boolean;
   public_teams: boolean;
+  is_admin: boolean;
+  avatar_url?: string | null;
 }
 export interface Role {
   accepting: boolean;

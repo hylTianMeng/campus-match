@@ -3,7 +3,7 @@
 import json
 from fastapi import HTTPException
 from .db import now, notify
-from .auth import public_user
+from .auth import public_user, avatar_url
 
 
 def require_post(db, post_id):
@@ -48,7 +48,7 @@ def post_view(db, post, viewer=None):
     result["owner"] = (
         public_user(owner)
         if viewer and viewer["verified"]
-        else {"id": owner["id"], "name": owner["name"]}
+        else {"id": owner["id"], "name": owner["name"], "avatar_url": avatar_url(owner)}
     )
     roles = []
     for role in db.execute(

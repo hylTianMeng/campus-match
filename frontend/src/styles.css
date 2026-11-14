@@ -167,6 +167,11 @@ small,
   height: 76px;
   font: 30px serif;
 }
+img.avatar {
+  display: block;
+  object-fit: cover;
+  object-position: center;
+}
 .num {
   display: inline-block;
   border-radius: 12px;
@@ -640,6 +645,25 @@ textarea {
 }
 .sidemenu .avatar {
   margin: 15px 12px;
+}
+.profilemini {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 6px 14px;
+}
+.profilemini .avatar {
+  width: 37px;
+  height: 37px;
+  margin: 0;
+  flex-shrink: 0;
+}
+.profilemini b {
+  font-weight: 600;
+  color: var(--p);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .row {
   display: flex;

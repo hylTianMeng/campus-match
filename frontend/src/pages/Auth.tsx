@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { write } from '../api';
 import { useSession } from '../context';
 import type { User } from '../types';
@@ -57,7 +57,9 @@ export function Auth() {
         </button>
       </form>
       <p className="small muted" style={{ marginTop: 20 }}>
-        校园邮箱注册与找回密码尚未开放。
+        还没有账号？<Link className="link" to="/register">注册账号</Link>
+        {' · '}
+        <Link className="link" to="/forgot">忘记密码</Link>
       </p>
     </div>
   );

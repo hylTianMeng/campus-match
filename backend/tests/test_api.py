@@ -252,7 +252,7 @@ def test_attachment_rejects_bad_format_and_size(client):
 def test_public_search_auth_and_csrf(client):
     posts = client.get("/api/posts").json()
     assert len(posts) == 6
-    assert set(posts[0]["owner"]) == {"id", "name"}
+    assert set(posts[0]["owner"]) == {"id", "name", "avatar_url"}
     assert len(client.get("/api/posts", params={"q": "碳足迹"}).json()) == 1
     assert client.get("/api/me/applications").status_code == 401
     assert (
