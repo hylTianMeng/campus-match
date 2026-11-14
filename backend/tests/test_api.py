@@ -26,6 +26,61 @@ def new_post(client, capacities=(1, 1)):
     return response.json()
 
 
+def test_post_tags_can_be_published_edited_and_searched(client):
+    login(client, "chen")
+    post = client.post(
+        "/api/posts",
+        json={
+            "title": "小标签招募",
+            "category": "课程项目",
+            "description": "一起做项目",
+            "deadline": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat(),
+            "tags": [" 零基础友好 ", "周末活动", "零基础友好"],
+            "roles": [{"name": "成员", "capacity": 1}],
+        },
+    )
+    assert post.status_code == 201, post.text
+    post_id = post.json()["id"]
+    assert post.json()["tags"] == ["零基础友好", "周末活动"]
+    assert "零基础友好" in client.get("/api/post-tags").json()
+    assert post_id in [p["id"] for p in client.get("/api/posts", params={"tag": "零基础友好"}).json()]
+    assert post_id not in [p["id"] for p in client.get("/api/posts", params={"tag": "零基础"}).json()]
+    edited = client.patch(
+        f"/api/posts/{post_id}",
+        json={"title": "小标签招募", "description": "一起做项目", "tags": ["设计协作"]},
+    )
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["tags"] == ["设计协作"]
+    assert post_id not in [p["id"] for p in client.get("/api/posts", params={"tag": "零基础友好"}).json()]
+    assert post_id in [p["id"] for p in client.get("/api/posts", params={"tag": "设计协作"}).json()]
+
+
+def test_post_search_prioritizes_tags_before_pagination_and_filters_category(client):
+    login(client, "chen")
+    categories = client.get("/api/categories").json()
+    created = []
+    for index, tags in enumerate([["检索标记"], ["检索标记扩展"], []]):
+        response = client.post("/api/posts", json={
+            "title": "检索标记" if not tags else "协作招募",
+            "category": categories[index % 2],
+            "description": "一起完成项目",
+            "tags": tags,
+            "deadline": (datetime.now(timezone.utc) + timedelta(days=4-index)).isoformat(),
+            "roles": [{"name": "成员", "capacity": 1}],
+        })
+        assert response.status_code == 201, response.text
+        created.append(response.json()["id"])
+    for sort in ["latest", "deadline"]:
+        results = client.get("/api/posts", params={"q": "检索标记", "sort": sort}).json()
+        assert [p["id"] for p in results] == created
+        first = client.get("/api/posts", params={"q": "检索标记", "sort": sort, "limit": 1}).json()
+        assert first[0]["id"] == created[0]
+    second = client.get("/api/posts", params={"q": "检索标记", "limit": 1, "offset": 1}).json()
+    assert second[0]["id"] == created[1]
+    filtered = client.get("/api/posts", params={"q": "检索标记", "category": categories[1]}).json()
+    assert [p["id"] for p in filtered] == [created[1]]
+
+
 def apply(client, post, role=0):
     response = client.post(
         f"/api/posts/{post['id']}/applications",

@@ -7,15 +7,22 @@ import { Header, Empty, LoadState } from '../components/ui';
 export function Discover() {
   const [input, setInput] = useState(''),
     [q, setQ] = useState(''),
+    [tagInput, setTagInput] = useState(''),
+    [tag, setTag] = useState(''),
     [category, setCategory] = useState('全部'),
     [sort, setSort] = useState('latest');
-  const posts = useData<Post[]>('/posts?' + new URLSearchParams({ q, sort }));
+  const posts = useData<Post[]>('/posts?' + new URLSearchParams({
+    q, tag, sort, category: category === '全部' ? '' : category,
+  }));
   const categories = useData<string[]>('/categories');
-  const all = posts.data ?? [],
-    visible = all.filter((p) => category === '全部' || p.category === category);
+  const availableTags = useData<string[]>('/post-tags');
+  const visible = posts.data ?? [];
+  const searching = Boolean(q || tag);
   function clear() {
     setInput('');
     setQ('');
+    setTagInput('');
+    setTag('');
     setCategory('全部');
   }
   return (
@@ -30,22 +37,53 @@ export function Discover() {
           className="search"
           onSubmit={(e) => {
             e.preventDefault();
-            setQ(input);
+            setQ(input.trim());
+            setTag(tagInput.trim());
           }}
         >
           <input
             aria-label="招募关键词"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="搜索招募标题、分类或标签"
+            placeholder="搜索标签、标题、分类或说明"
           />
+          <input
+            aria-label="招募标签"
+            list="post-tag-options"
+            value={tagInput}
+            onChange={(e) => setTagInput(e.target.value)}
+            placeholder="查找小标签"
+          />
+          <datalist id="post-tag-options">
+            {availableTags.data?.map((value) => <option key={value} value={value} />)}
+          </datalist>
           <button className="btn">搜索招募</button>
-          {(q || category !== '全部') && (
+          {(q || tag || category !== '全部') && (
             <button type="button" className="btn ghost" onClick={clear}>
               清空搜索
             </button>
           )}
         </form>
+        {!!availableTags.data?.length && (
+          <div className="tag-filter" aria-label="可查找的小标签">
+            <span className="small muted">小标签</span>
+            {availableTags.data.slice(0, 12).map((value) => (
+              <button
+                type="button"
+                className={'tag tag-button' + (tag === value ? ' active' : '')}
+                aria-pressed={tag === value}
+                key={value}
+                onClick={() => {
+                  const next = tag === value ? '' : value;
+                  setTag(next);
+                  setTagInput(next);
+                }}
+              >
+                {value}
+              </button>
+            ))}
+          </div>
+        )}
       </section>
       <div className="cattabs">
         {['全部', ...(categories.data ?? [])].map((c) => (
@@ -56,9 +94,6 @@ export function Discover() {
             aria-pressed={c === category}
           >
             {c}
-            <span className="chip-num">
-              {c === '全部' ? all.length : all.filter((p) => p.category === c).length}
-            </span>
           </button>
         ))}
       </div>
@@ -80,7 +115,11 @@ export function Discover() {
           </button>
         </Empty>
       )}
-      {categories.data?.map((c) => {
+      {searching ? (
+        <div className="grid">
+          {visible.map((p) => <PostCard key={p.id} post={p} />)}
+        </div>
+      ) : categories.data?.map((c) => {
         const items = visible.filter((p) => p.category === c);
         return items.length ? (
           <div className="catsection" key={c}>

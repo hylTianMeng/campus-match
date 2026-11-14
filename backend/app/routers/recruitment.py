@@ -105,10 +105,21 @@ def categories(db=Depends(get_db)):
     return [r["name"] for r in db.execute("SELECT name FROM categories ORDER BY id")]
 
 
+@router.get("/post-tags")
+def post_tags(db=Depends(get_db)):
+    rows = db.execute(
+        "SELECT value FROM posts p JOIN users u ON u.id=p.owner_id "
+        "JOIN json_each(p.tags) WHERE p.status='open' AND u.banned=0 "
+        "AND value<>'' GROUP BY value ORDER BY count(*) DESC,value"
+    ).fetchall()
+    return [row["value"] for row in rows]
+
+
 @router.get("/posts")
 def posts(
     q: str = "",
     category: str = "",
+    tag: str = "",
     sort: str = "latest",
     limit: int = Query(100, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -120,11 +131,22 @@ def posts(
         if sort == "deadline"
         else "p.created_at DESC,p.id DESC"
     )
+    # Rank tag matches before applying pagination; category only filters results.
+    relevance = (
+        "CASE WHEN EXISTS (SELECT 1 FROM json_each(p.tags) WHERE lower(value)=lower(?)) THEN 0 "
+        "WHEN EXISTS (SELECT 1 FROM json_each(p.tags) WHERE instr(lower(value),lower(?))>0) THEN 1 "
+        "ELSE 2 END,"
+        if q else ""
+    )
+    parameters = [category, category, tag, tag, q, q]
+    if q:
+        parameters.extend([q, q])
+    parameters.extend([limit, offset])
     rows = db.execute(
-        "SELECT p.* FROM posts p JOIN users u ON u.id=p.owner_id WHERE p.status='open' AND u.banned=0 AND (?='' OR p.category=?) AND (?='' OR instr(lower(p.title || p.category || p.description || p.tags),lower(?))>0) ORDER BY "
-        + order
+        "SELECT p.* FROM posts p JOIN users u ON u.id=p.owner_id WHERE p.status='open' AND u.banned=0 AND (?='' OR p.category=?) AND (?='' OR EXISTS (SELECT 1 FROM json_each(p.tags) WHERE lower(value)=lower(?))) AND (?='' OR instr(lower(p.title || p.category || p.description || p.tags),lower(?))>0) ORDER BY "
+        + relevance + order
         + " LIMIT ? OFFSET ?",
-        (category, category, q, q, limit, offset),
+        parameters,
     ).fetchall()
     return [post_view(db, p, user) for p in rows]
 

@@ -432,6 +432,22 @@ textarea {
   border-radius: 3px;
   color: #8b7296;
 }
+.tag-button {
+  cursor: pointer;
+}
+.tag-button:hover,
+.tag-button.active {
+  border-color: var(--p);
+  color: var(--p);
+  background: var(--light);
+}
+.tag-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
 .badge {
   display: inline-block;
   padding: 2px 8px;

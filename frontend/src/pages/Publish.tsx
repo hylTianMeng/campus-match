@@ -449,9 +449,10 @@ export function Publish() {
                 <Field label="活动地点（选填）">
                   <input value={form.place} onChange={(e) => set('place', e.target.value)} />
                 </Field>
-                <Field label="招募标签（选填）">
+                <Field label="招募小标签（选填）">
                   <input
                     value={postTagText}
+                    placeholder="例如：零基础友好，周末活动，设计协作"
                     onChange={(e) => {
                       setPostTagText(e.target.value);
                       set('tags', tagsFrom(e.target.value));
@@ -459,7 +460,26 @@ export function Publish() {
                   />
                 </Field>
               </div>
-              <p className="small muted">标签用逗号分隔。</p>
+              <p className="small muted">小标签用逗号分隔，可自由添加；它们会显示在招募卡片上，也可用于搜索。</p>
+              {!!form.tags.length && (
+                <div className="tags" aria-label="已添加的招募小标签">
+                  {form.tags.map((tag) => (
+                    <button
+                      className="tag tag-button"
+                      type="button"
+                      key={tag}
+                      aria-label={`移除标签 ${tag}`}
+                      onClick={() => {
+                        const next = form.tags.filter((value) => value !== tag);
+                        setPostTagText(next.join(', '));
+                        set('tags', next);
+                      }}
+                    >
+                      {tag} ×
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="panel">
               <h2>04 / 补充信息（选填）</h2>

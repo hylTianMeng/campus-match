@@ -66,6 +66,13 @@ class PostEdit(Input):
     extras: Extras = Field(default_factory=Extras)
     attachment_id: Optional[int] = None
 
+    @field_validator("tags")
+    @classmethod
+    def valid_tags(cls, values):
+        if any(not value.strip() or len(value.strip()) > 40 for value in values):
+            raise ValueError("招募标签长度须为 1–40 个字符")
+        return list(dict.fromkeys(value.strip() for value in values))
+
 
 class PostCreate(PostEdit):
     category: str = Field(min_length=1, max_length=40)
