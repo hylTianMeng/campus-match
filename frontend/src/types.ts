@@ -15,6 +15,8 @@ export interface User extends Person {
   public_teams: boolean;
 }
 export interface Role {
+  accepting: boolean;
+  application_count: number;
   id: number;
   name: string;
   capacity: number;
@@ -22,7 +24,14 @@ export interface Role {
   description: string;
   tags: string[];
 }
+export interface InformationItem {
+  title: string;
+  type: 'text' | 'link' | 'attachment';
+  content: string;
+  attachment_id: number | null;
+}
 export interface Extras {
+  items: InformationItem[];
   contact: string;
   eventIntro: string;
   mentor: string;
@@ -43,6 +52,7 @@ export interface Post {
   event_time: string;
   extras: Partial<Extras>;
   attachment: { id: number; filename: string; size: number } | null;
+  attachments?: { id: number; filename: string; size: number }[];
   created_at: string;
   updated_at: string;
   status: 'open' | 'ended';
@@ -70,6 +80,10 @@ export interface Application {
   events: { status: string; reason: string; created_at: string }[];
 }
 export interface RoleInput {
+  id?: number;
+  accepting?: boolean;
+  accepted?: number;
+  application_count?: number;
   name: string;
   capacity: number;
   description: string;

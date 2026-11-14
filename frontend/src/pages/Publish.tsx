@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, useData, write } from '../api';
 import { useSession } from '../context';
-import type { Draft, Post, PostInput, RoleInput } from '../types';
+import type { Draft, Post, PostInput, RoleInput, InformationItem } from '../types';
 import { Header, Field, ErrorNote, LoadState, tagsFrom } from '../components/ui';
 const blankRole = (): RoleInput => ({ name: '', capacity: 1, description: '', tags: [] });
 const blankPost = (): PostInput => ({
@@ -28,6 +28,8 @@ export function Publish() {
     navigate = useNavigate(),
     { toast } = useSession();
   const [form, setForm] = useState<PostInput>(blankPost),
+    [ended, setEnded] = useState(false),
+    [attachmentNames, setAttachmentNames] = useState<Record<number, string>>({}),
     [revision, setRevision] = useState(0),
     [saveStatus, setSaveStatus] = useState<'idle' | 'pending' | 'saving' | 'saved' | 'error'>(
       'idle',
@@ -51,6 +53,8 @@ export function Publish() {
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const scope = useRef(0);
   const publishing = useRef(false);
+  const originalDeadline = useRef('');
+  const originalEventTime = useRef('');
   function loadForm(value: PostInput, loadedDraftId?: number) {
     setForm(value);
     setPostTagText(value.tags.join(', '));
@@ -74,7 +78,12 @@ export function Publish() {
       try {
         if (id) {
           const p = await api<Post>('/posts/' + id);
-          if (p.status === 'ended') throw new Error('招募已结束，不能编辑');
+          if (active) setAttachmentNames(Object.fromEntries(
+            (p.attachments ?? (p.attachment ? [p.attachment] : [])).map((a) => [a.id, a.filename]),
+          ));
+          if (active) setEnded(p.status === 'ended');
+          originalDeadline.current = p.deadline;
+          originalEventTime.current = p.event_time;
           if (active)
             loadForm({
               ...p,
@@ -82,7 +91,8 @@ export function Publish() {
               attachment_name: p.attachment?.filename ?? '',
               deadline: localDate(p.deadline),
               event_time: localDate(p.event_time),
-              roles: p.roles.map(({ name, capacity, description, tags }) => ({
+              roles: p.roles.map(({ id, name, capacity, description, tags, accepting, accepted, application_count }) => ({
+                id, accepting: accepting ?? true, accepted, application_count,
                 name,
                 capacity,
                 description,
@@ -90,11 +100,12 @@ export function Publish() {
               })),
             });
         } else if (sourceDraft) {
+          if (active) setEnded(false);
           const drafts = await api<Draft[]>('/drafts');
           const draft = drafts.find((d) => d.id === +sourceDraft);
           if (!draft) throw new Error('草稿不存在');
           if (active) loadForm({ ...blankPost(), ...draft.payload }, draft.id);
-        } else if (active) loadForm(blankPost());
+        } else if (active) { setEnded(false); loadForm(blankPost()); }
       } catch (e) {
         if (active) setLoadError((e as Error).message);
       } finally {
@@ -117,7 +128,10 @@ export function Publish() {
       'roles',
       form.roles.map((r, i) => (i === index ? { ...r, ...values } : r)),
     );
-  async function uploadFile(file: File) {
+  function setItem(index: number, patch: Partial<InformationItem>) {
+    set('extras', { ...form.extras, items: (form.extras.items ?? []).map((item, i) => i === index ? { ...item, ...patch } : item) });
+  }
+  async function uploadFile(file: File, itemIndex?: number) {
     if (file.size > 5 * 1024 * 1024) {
       setError('附件大小不能超过 5 MB');
       return;
@@ -135,11 +149,12 @@ export function Publish() {
         filename: file.name,
         content_base64: encoded,
       });
-      setForm((current) => ({
-        ...current,
-        attachment_id: uploaded.id,
-        attachment_name: uploaded.filename,
-      }));
+      setAttachmentNames((names) => ({ ...names, [uploaded.id]: uploaded.filename }));
+      setForm((current) => itemIndex === undefined ? ({
+        ...current, attachment_id: uploaded.id, attachment_name: uploaded.filename,
+      }) : ({ ...current, extras: { ...current.extras, items: (current.extras.items ?? []).map(
+        (item, i) => i === itemIndex ? { ...item, attachment_id: uploaded.id } : item,
+      ) } }));
       latestRevision.current++;
       setRevision(latestRevision.current);
       if (!edit) setSaveStatus('pending');
@@ -229,7 +244,7 @@ export function Publish() {
         title={edit ? '编辑已发布招募' : '让一个想法，找到伙伴'}
         sub={
           edit
-            ? '仅保存一般信息；不会改变原发布时间或重新开放招募。'
+            ? '保存信息调整；时间、地点和岗位变更会通知相关申请者。'
             : '按岗位描述合作期待。填写时会自动保存为私有草稿。'
         }
       >
@@ -246,12 +261,12 @@ export function Publish() {
           </Link>
         )}
       </Header>
-      {edit && <div className="notice">已发布的分类、截止时间、活动时间及岗位信息已锁定。</div>}
+      {edit && <div className="notice">{ended ? '招募已结束，可修正说明、联系方式和补充资料；岗位、名额和录取结果已锁定。' : '时间、地点和岗位变更会通知相关申请者。截止时间只允许延长；有申请记录的岗位可停止接收申请。'}</div>}
       <form
         onSubmit={async (e) => {
           e.preventDefault();
           setError('');
-          if (!edit && !form.roles.length) {
+          if (!ended && !form.roles.length) {
             setError('请至少添加一个岗位');
             return;
           }
@@ -270,7 +285,12 @@ export function Publish() {
               ...rest
             } = form;
             const body = edit
-              ? { title, description, place, tags, extras, attachment_id }
+              ? { title, description, place, tags, extras, attachment_id, ...(!ended ? {
+                  category: form.category,
+                  event_time: form.event_time === localDate(originalEventTime.current) ? originalEventTime.current : (form.event_time ? new Date(form.event_time).toISOString() : ''),
+                  deadline: form.deadline === localDate(originalDeadline.current) ? originalDeadline.current : new Date(form.deadline).toISOString(),
+                  roles: form.roles.map(({ id, name, capacity, description, tags, accepting }) => ({ id, name, capacity, description, tags, accepting: accepting ?? true })),
+                } : {}) }
               : {
                   ...rest,
                   title,
@@ -307,6 +327,7 @@ export function Publish() {
               <Field label="招募标题 *">
                 <input
                   required
+                  disabled={ended}
                   maxLength={160}
                   value={form.title}
                   onChange={(e) => set('title', e.target.value)}
@@ -315,7 +336,7 @@ export function Publish() {
               <Field label="一级分类 *">
                 <select
                   required
-                  disabled={edit}
+                  disabled={ended}
                   value={form.category}
                   onChange={(e) => set('category', e.target.value)}
                 >
@@ -350,7 +371,7 @@ export function Publish() {
                 <div className="roleform" key={roleKeys[i]}>
                   <div className="between">
                     <h3>岗位 {i + 1}</h3>
-                    {!edit && (
+                    {!ended && !r.application_count && (
                       <button
                         className="link"
                         type="button"
@@ -371,7 +392,7 @@ export function Publish() {
                     <Field label="岗位名称 *">
                       <input
                         required
-                        disabled={edit}
+                        disabled={ended}
                         value={r.name}
                         onChange={(e) => setRole(i, { name: e.target.value })}
                       />
@@ -379,9 +400,9 @@ export function Publish() {
                     <Field label="招募人数 *">
                       <input
                         required
-                        disabled={edit}
+                        disabled={ended}
                         type="number"
-                        min={1}
+                        min={Math.max(1, r.accepted ?? 0)}
                         max={100}
                         value={r.capacity}
                         onChange={(e) => setRole(i, { capacity: Number(e.target.value) })}
@@ -389,7 +410,7 @@ export function Publish() {
                     </Field>
                     <Field label="技能标签">
                       <input
-                        disabled={edit}
+                        disabled={ended}
                         value={roleTagTexts[i] ?? ''}
                         onChange={(e) => {
                           const value = e.target.value;
@@ -402,15 +423,19 @@ export function Publish() {
                     </Field>
                     <Field label="岗位描述">
                       <textarea
-                        disabled={edit}
+                        disabled={ended}
                         value={r.description}
                         onChange={(e) => setRole(i, { description: e.target.value })}
                       />
                     </Field>
                   </div>
+                  <label className="small">
+                    <input type="checkbox" disabled={ended} checked={r.accepting ?? true} onChange={(e) => setRole(i, { accepting: e.target.checked })} /> 接收新申请
+                  </label>
+                  {!!r.application_count && <p className="small muted">已有 {r.application_count} 条申请记录，已录取 {r.accepted} 人；可停止接收新申请，保留已有记录。</p>}
                 </div>
               ))}
-              {!edit && (
+              {!ended && (
                 <div className="roleform add-role">
                   <button
                     type="button"
@@ -432,7 +457,7 @@ export function Publish() {
                 <Field label="招募截止时间 *">
                   <input
                     required
-                    disabled={edit}
+                    disabled={ended}
                     type="datetime-local"
                     value={form.deadline}
                     onChange={(e) => set('deadline', e.target.value)}
@@ -440,18 +465,19 @@ export function Publish() {
                 </Field>
                 <Field label="活动时间（选填）">
                   <input
-                    disabled={edit}
+                    disabled={ended}
                     type="datetime-local"
                     value={form.event_time}
                     onChange={(e) => set('event_time', e.target.value)}
                   />
                 </Field>
                 <Field label="活动地点（选填）">
-                  <input value={form.place} onChange={(e) => set('place', e.target.value)} />
+                  <input disabled={ended} value={form.place} onChange={(e) => set('place', e.target.value)} />
                 </Field>
                 <Field label="招募小标签（选填）">
                   <input
                     value={postTagText}
+                    disabled={ended}
                     placeholder="例如：零基础友好，周末活动，设计协作"
                     onChange={(e) => {
                       setPostTagText(e.target.value);
@@ -467,6 +493,7 @@ export function Publish() {
                     <button
                       className="tag tag-button"
                       type="button"
+                      disabled={ended}
                       key={tag}
                       aria-label={`移除标签 ${tag}`}
                       onClick={() => {
@@ -483,6 +510,49 @@ export function Publish() {
             </div>
             <div className="panel">
               <h2>04 / 补充信息（选填）</h2>
+              <p className="small muted">自行填写信息标题，并选择文字信息、网址链接或附件内容。填写后将在招募详情中公开展示。</p>
+              {(form.extras.items ?? []).map((item, index) => (
+                <div className="roleform" key={index}>
+                  <div className="between">
+                    <h3>信息 {index + 1}</h3>
+                    <button type="button" className="link" disabled={uploading || busy} onClick={() => set('extras', {
+                      ...form.extras, items: form.extras.items!.filter((_, i) => i !== index),
+                    })}>移除信息</button>
+                  </div>
+                  <Field label="信息标题 *">
+                    <input required maxLength={100} value={item.title} onChange={(e) => setItem(index, { title: e.target.value })} />
+                  </Field>
+                  <Field label="信息属性 *">
+                    <select value={item.type} disabled={uploading || busy} onChange={(e) => setItem(index, {
+                      type: e.target.value as InformationItem['type'], content: '', attachment_id: null,
+                    })}>
+                      <option value="text">文字信息</option>
+                      <option value="link">网址链接</option>
+                      <option value="attachment">附件内容</option>
+                    </select>
+                  </Field>
+                  {item.type === 'text' ? (
+                    <Field label="文字内容 *"><textarea required maxLength={5000} value={item.content} onChange={(e) => setItem(index, { content: e.target.value })} /></Field>
+                  ) : item.type === 'link' ? (
+                    <Field label="网址 *"><input required type="url" placeholder="https://" maxLength={5000} value={item.content} onChange={(e) => setItem(index, { content: e.target.value })} /></Field>
+                  ) : (
+                    <Field label="附件内容 *">
+                      <input type="file" required={!item.attachment_id} accept=".pdf,.docx,.png,.jpg,.jpeg,.txt" disabled={uploading || busy} onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) void uploadFile(file, index);
+                        e.target.value = '';
+                      }} />
+                      {item.attachment_id && <p className="small">已上传：{attachmentNames[item.attachment_id] || `附件 #${item.attachment_id}`}</p>}
+                    </Field>
+                  )}
+                </div>
+              ))}
+              <button type="button" className="btn secondary" disabled={uploading || busy || (form.extras.items?.length ?? 0) >= 20} onClick={() => set('extras', {
+                ...form.extras, items: [...(form.extras.items ?? []), { title: '', type: 'text', content: '', attachment_id: null }],
+              })}>＋ 添加自定义信息</button>
+              <p className="small muted">附件支持 PDF、DOCX、PNG、JPG、TXT，每个最多 5 MB。</p>
+              {uploading && <p className="small" role="status">附件上传中…</p>}
+              {(Object.entries(form.extras).some(([key, value]) => key !== 'items' && key !== 'contact' && Boolean(value)) || form.attachment_id) && <div>
               {(
                 [
                   ['eventIntro', '赛事 / 活动介绍'],
@@ -548,6 +618,7 @@ export function Publish() {
                   </button>
                 </div>
               )}
+              </div>}
             </div>
           </section>
           <aside>
@@ -561,7 +632,7 @@ export function Publish() {
                 <br />
                 区分招募截止和活动时间。
                 <br />
-                发布后名额与截止不能修改。
+                减少名额不能低于已录取人数，截止时间只可延长。
               </p>
             </div>
           </aside>
@@ -605,7 +676,7 @@ export function Publish() {
               </button>
             )}
             <button className="btn" disabled={busy || uploading}>
-              {busy ? '保存中…' : edit ? '保存一般信息' : '正式发布招募'}
+              {busy ? '保存中…' : edit ? '保存修改' : '正式发布招募'}
             </button>
           </div>
         </div>

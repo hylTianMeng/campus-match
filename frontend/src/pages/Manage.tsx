@@ -119,11 +119,11 @@ export function Posts() {
               <Link className="btn secondary" to={'/posts/' + p.id + '/applications'}>
                 管理申请
               </Link>
-              {p.status === 'open' && (
-                <>
                   <Link className="link" to={'/edit/' + p.id}>
                     编辑
                   </Link>
+              {p.status === 'open' && (
+                <>
                   <button
                     className="link"
                     onClick={() =>

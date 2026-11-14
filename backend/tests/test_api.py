@@ -81,6 +81,54 @@ def test_post_search_prioritizes_tags_before_pagination_and_filters_category(cli
     assert [p["id"] for p in filtered] == [created[1]]
 
 
+def test_custom_information_and_multiple_attachments(client):
+    login(client, "chen")
+    uploaded = []
+    for name in ["资料一.txt", "资料二.txt", "原有附件.txt"]:
+        response = client.post("/api/attachments", json={
+            "filename": name, "content_base64": base64.b64encode(b"public information").decode(),
+        })
+        assert response.status_code == 201, response.text
+        uploaded.append(response.json()["id"])
+    items = [
+        {"title": "参与说明", "type": "text", "content": "每周讨论一次"},
+        {"title": "项目主页", "type": "link", "content": "https://example.com/project"},
+        *[{"title": f"资料 {index}", "type": "attachment", "attachment_id": value}
+          for index, value in enumerate(uploaded[:2])],
+    ]
+    body = {
+        "title": "自定义信息招募", "description": "协作项目", "category": "课程项目",
+        "deadline": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat(),
+        "roles": [{"name": "成员", "capacity": 1}],
+        "extras": {"items": items}, "attachment_id": uploaded[2],
+    }
+    draft = client.post("/api/drafts", json={"payload": body})
+    assert draft.status_code == 201
+    assert client.get("/api/drafts").json()[0]["payload"]["extras"]["items"] == items
+    # An uploader cannot claim another user's file.
+    login(client, "lin")
+    assert client.post("/api/posts", json=body).status_code == 422
+    login(client, "chen")
+    response = client.post("/api/posts", json=body)
+    assert response.status_code == 201, response.text
+    post = response.json()
+    assert len(post["attachments"]) == 3
+    assert post["attachment"]["id"] == uploaded[2]
+    assert post["extras"]["items"][0]["title"] == "参与说明"
+    for value in uploaded[:2]:
+        assert client.get(f"/api/posts/{post['id']}/attachments/{value}").content == b"public information"
+    other = new_post(client)
+    assert client.get(f"/api/posts/{other['id']}/attachments/{uploaded[0]}").status_code == 404
+    edited = {"title": body["title"], "description": body["description"], "extras": {"items": items[:3]}}
+    assert client.patch(f"/api/posts/{post['id']}", json=edited).status_code == 200
+    assert client.get(f"/api/posts/{post['id']}/attachments/{uploaded[1]}").status_code == 404
+    assert client.get(f"/api/posts/{post['id']}/attachment").status_code == 200
+    edited["extras"]["items"] = [{"title": "不安全链接", "type": "link", "content": "javascript:alert(1)"}]
+    assert client.patch(f"/api/posts/{post['id']}", json=edited).status_code == 422
+    edited["extras"]["items"] = [{"title": "未上传文件", "type": "attachment"}]
+    assert client.patch(f"/api/posts/{post['id']}", json=edited).status_code == 422
+
+
 def apply(client, post, role=0):
     response = client.post(
         f"/api/posts/{post['id']}/applications",
@@ -249,7 +297,7 @@ def test_drafts_ownership_edit_locks_and_reapply(client):
             f"/api/posts/{post['id']}",
             json={"title": "修改", "description": "描述", "deadline": now()},
         ).status_code
-        == 422
+        == 409
     )
     login(client)
     app_id = apply(client, post)
@@ -274,6 +322,96 @@ def test_ended_post_cannot_be_edited(client):
         f"/api/posts/{post['id']}",
         json={"title": "结束后改写", "description": "描述"},
     ).status_code == 409
+    updated = client.patch(f"/api/posts/{post['id']}", json={
+        "title": post["title"], "description": "结束后补充说明", "extras": {"contact": "新联系方式"},
+    })
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["status"] == "ended"
+    assert updated.json()["extras"]["contact"] == "新联系方式"
+
+
+def test_edit_roles_capacity_history_and_notifications(client):
+    login(client, "chen")
+    post = new_post(client, (3, 2))
+    role_id = post["roles"][0]["id"]
+    login(client, "lin")
+    first = apply(client, post)
+    login(client, "shen")
+    second = apply(client, post)
+    login(client, "chen")
+    assert decision(client, first).status_code == 200
+    assert decision(client, second).status_code == 200
+    roles = [{key: role[key] for key in ("id", "name", "capacity", "description", "tags", "accepting")}
+             for role in post["roles"]]
+    body = {"title": post["title"], "description": post["description"], "roles": roles}
+    roles[0]["capacity"] = 1
+    assert client.patch(f"/api/posts/{post['id']}", json=body).status_code == 409
+    roles[0].update(capacity=3, name="调整后的岗位", description="新职责", accepting=False)
+    body.update(place="新地点", event_time=(datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+                category=client.get("/api/categories").json()[-1],
+                deadline=(datetime.now(timezone.utc) + timedelta(days=5)).isoformat())
+    changed = client.patch(f"/api/posts/{post['id']}", json=body)
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["roles"][0]["accepted"] == 2
+    assert changed.json()["created_at"] == post["created_at"]
+    login(client, "lin")
+    notices = client.get("/api/notices").json()
+    assert any("岗位" in n["body"] and "更新" in n["body"] for n in notices)
+    assert any("安排" in n["body"] for n in notices)
+    login(client, "zhou")
+    assert client.post(f"/api/posts/{post['id']}/applications", json={"role_id": role_id}).status_code == 409
+    login(client, "chen")
+    # Removing a role with history is rejected, including after an applicant leaves.
+    assert client.patch(f"/api/posts/{post['id']}", json={**body, "roles": roles[1:]}).status_code == 409
+    # Remove the unused role and add another without changing existing role IDs.
+    body["roles"] = [roles[0], {"name": "新岗位", "capacity": 2}]
+    changed = client.patch(f"/api/posts/{post['id']}", json=body)
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["roles"][0]["id"] == role_id
+    assert changed.json()["roles"][1]["id"] != post["roles"][1]["id"]
+    foreign = new_post(client)
+    assert client.patch(f"/api/posts/{post['id']}", json={**body, "roles": [{"id": foreign["roles"][0]["id"], "name": "越权", "capacity": 2}]}).status_code == 422
+
+
+def test_reduce_capacity_settles_pending_and_locks_filled_post(client):
+    login(client, "chen")
+    post = new_post(client, (3,))
+    login(client, "lin")
+    first = apply(client, post)
+    login(client, "shen")
+    second = apply(client, post)
+    login(client, "chen")
+    assert decision(client, first).status_code == 200
+    response = client.patch(f"/api/posts/{post['id']}", json={
+        "title": post["title"], "description": post["description"],
+        "roles": [{"id": post["roles"][0]["id"], "name": "成员", "capacity": 1}],
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "ended"
+    assert response.json()["end_reason"] == "filled"
+    with connect() as db:
+        assert db.execute("SELECT status FROM applications WHERE id=?", (second,)).fetchone()[0] == "rejected"
+        assert db.execute("SELECT status FROM applications WHERE id=?", (first,)).fetchone()[0] == "accepted"
+    assert client.patch(f"/api/posts/{post['id']}", json={
+        "title": post["title"], "description": "新说明", "roles": [{"id": post["roles"][0]["id"], "name": "成员", "capacity": 5}],
+    }).status_code == 409
+
+
+def test_copy_recruitment_to_draft_preserves_source_and_copies_files(client):
+    login(client, "chen")
+    attachment = client.post("/api/attachments", json={"filename": "资料.txt", "content_base64": base64.b64encode(b"copy me").decode()}).json()
+    post = new_post(client)
+    items = [{"title": "资料", "type": "attachment", "attachment_id": attachment["id"]}]
+    assert client.patch(f"/api/posts/{post['id']}", json={"title": post["title"], "description": post["description"], "extras": {"items": items}}).status_code == 200
+    response = client.post(f"/api/posts/{post['id']}/copy-draft", json={})
+    assert response.status_code == 201, response.text
+    draft = next(d for d in client.get("/api/drafts").json() if d["id"] == response.json()["id"])["payload"]
+    assert draft["deadline"] == ""
+    assert "id" not in draft["roles"][0]
+    assert draft["extras"]["items"][0]["attachment_id"] != attachment["id"]
+    assert client.get(f"/api/posts/{post['id']}/attachments/{attachment['id']}").content == b"copy me"
+    login(client, "lin")
+    assert client.post(f"/api/posts/{post['id']}/copy-draft", json={}).status_code == 403
 
 
 def test_existing_posts_receive_updated_at(tmp_path, monkeypatch):

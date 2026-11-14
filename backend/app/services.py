@@ -23,14 +23,23 @@ def require_open(post):
         raise HTTPException(409, "招募已结束，结果已锁定")
 
 
+def legacy_attachment(db, post):
+    custom_ids = {item.get("attachment_id") for item in json.loads(post["extras"]).get("items", [])}
+    return next((row for row in db.execute(
+        "SELECT id,filename,length(content) AS size FROM attachments WHERE post_id=? ORDER BY id",
+        (post["id"],),
+    ) if row["id"] not in custom_ids), None)
+
+
 def post_view(db, post, viewer=None):
     result = dict(post)
     result["tags"] = json.loads(post["tags"])
     result["extras"] = json.loads(post["extras"])
-    attachment = db.execute(
-        "SELECT id,filename,length(content) AS size FROM attachments WHERE post_id=?",
+    attachment = legacy_attachment(db, post)
+    result["attachments"] = [dict(row) for row in db.execute(
+        "SELECT id,filename,length(content) AS size FROM attachments WHERE post_id=? ORDER BY id",
         (post["id"],),
-    ).fetchone()
+    )]
     result["attachment"] = dict(attachment) if attachment else None
     owner = db.execute("SELECT * FROM users WHERE id=?", (post["owner_id"],)).fetchone()
     result["owner"] = (
@@ -46,6 +55,8 @@ def post_view(db, post, viewer=None):
             {
                 **dict(role),
                 "tags": json.loads(role["tags"]),
+                "accepting": bool(role["accepting"]),
+                "application_count": db.execute("SELECT count(*) FROM applications WHERE role_id=?", (role["id"],)).fetchone()[0],
                 "accepted": db.execute(
                     "SELECT count(*) FROM applications WHERE role_id=? AND status='accepted'",
                     (role["id"],),

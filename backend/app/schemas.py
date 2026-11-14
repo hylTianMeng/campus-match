@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 from urllib.parse import urlparse
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 
 class Input(BaseModel):
@@ -36,9 +36,36 @@ class Role(Input):
     capacity: int = Field(ge=1, le=100)
     description: str = Field(default="", max_length=2000)
     tags: List[str] = Field(default_factory=list, max_length=20)
+    accepting: bool = True
+
+
+class RoleEdit(Role):
+    id: Optional[int] = None
+
+
+class InformationItem(Input):
+    title: str = Field(min_length=1, max_length=100)
+    type: Literal["text", "link", "attachment"]
+    content: str = Field(default="", max_length=5000)
+    attachment_id: Optional[int] = None
+
+    @model_validator(mode="after")
+    def validate_content(self):
+        if self.type == "attachment":
+            if self.attachment_id is None or self.content:
+                raise ValueError("附件信息须上传文件")
+        else:
+            if not self.content or self.attachment_id is not None:
+                raise ValueError("请填写信息内容")
+            if self.type == "link":
+                parsed = urlparse(self.content)
+                if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                    raise ValueError("链接仅支持完整的 http / https 地址")
+        return self
 
 
 class Extras(Input):
+    items: List[InformationItem] = Field(default_factory=list, max_length=20)
     contact: str = Field(default="", max_length=300)
     eventIntro: str = Field(default="", max_length=5000)
     mentor: str = Field(default="", max_length=2000)
@@ -59,6 +86,10 @@ class Extras(Input):
 
 
 class PostEdit(Input):
+    category: Optional[str] = Field(default=None, min_length=1, max_length=40)
+    deadline: Optional[datetime] = None
+    event_time: Optional[str] = Field(default=None, max_length=80)
+    roles: Optional[List[RoleEdit]] = Field(default=None, min_length=1, max_length=20)
     title: str = Field(min_length=1, max_length=160)
     description: str = Field(min_length=1, max_length=20000)
     place: str = Field(default="", max_length=200)

@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS posts(
 CREATE TABLE IF NOT EXISTS roles(
  id INTEGER PRIMARY KEY, post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
  name TEXT NOT NULL, capacity INTEGER NOT NULL CHECK(capacity>0),
- description TEXT NOT NULL DEFAULT '', tags TEXT NOT NULL DEFAULT '[]'
+ description TEXT NOT NULL DEFAULT '', tags TEXT NOT NULL DEFAULT '[]', accepting INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS applications(
  id INTEGER PRIMARY KEY, post_id INTEGER NOT NULL REFERENCES posts(id),
@@ -51,7 +51,6 @@ CREATE TABLE IF NOT EXISTS attachments(
  created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS attachments_post ON attachments(post_id);
-CREATE UNIQUE INDEX IF NOT EXISTS one_attachment_per_post ON attachments(post_id);
 CREATE TABLE IF NOT EXISTS favorites(
  user_id INTEGER NOT NULL REFERENCES users(id), post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
  PRIMARY KEY(user_id,post_id)

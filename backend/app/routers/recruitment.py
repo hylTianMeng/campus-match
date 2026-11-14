@@ -9,7 +9,7 @@ from fastapi.responses import Response
 from ..db import get_db, now, notify
 from ..auth import optional_user, current_user, student
 from ..schemas import PostCreate, PostEdit, ApplicationCreate, Decision, Draft, AttachmentUpload
-from ..services import require_post, require_owner, require_open, post_view, decide
+from ..services import require_post, require_owner, require_open, post_view, decide, legacy_attachment, transition
 
 router = APIRouter(prefix="/api", tags=["招募与申请"])
 
@@ -34,6 +34,21 @@ def attachment_for_post(db, attachment_id, user, post_id=None):
     if not row or row["post_id"] not in (None, post_id):
         raise HTTPException(422, "附件不存在或已用于其他招募")
     return row
+
+
+def information_attachment_ids(extras):
+    return [item.attachment_id for item in extras.items if item.type == "attachment"]
+
+
+def validate_attachments(db, data, user, post_id=None, legacy_id=None):
+    ids = information_attachment_ids(data.extras)
+    if legacy_id is not None:
+        ids.append(legacy_id)
+    if len(ids) != len(set(ids)):
+        raise HTTPException(422, "同一附件不能重复用于多个信息项")
+    for attachment_id in ids:
+        attachment_for_post(db, attachment_id, user, post_id)
+    return ids
 
 
 @router.post("/attachments", status_code=201)
@@ -64,10 +79,17 @@ def upload_attachment(data: AttachmentUpload, user=Depends(student), db=Depends(
         )
     if not valid:
         raise HTTPException(422, "文件内容与格式不符")
-    referenced = [
-        json.loads(row["payload"]).get("attachment_id")
-        for row in db.execute("SELECT payload FROM drafts WHERE user_id=?", (user["id"],))
-    ]
+    referenced = set()
+    for row in db.execute("SELECT payload FROM drafts WHERE user_id=?", (user["id"],)):
+        payload = json.loads(row["payload"])
+        if isinstance(payload.get("attachment_id"), int):
+            referenced.add(payload["attachment_id"])
+        extras = payload.get("extras")
+        items = extras.get("items", []) if isinstance(extras, dict) else []
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict) and isinstance(item.get("attachment_id"), int):
+                    referenced.add(item["attachment_id"])
     cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
     for row in db.execute(
         "SELECT id FROM attachments WHERE owner_id=? AND post_id IS NULL AND created_at<?",
@@ -83,12 +105,16 @@ def upload_attachment(data: AttachmentUpload, user=Depends(student), db=Depends(
 
 
 @router.get("/posts/{post_id}/attachment")
-def download_attachment(post_id: int, db=Depends(get_db)):
+@router.get("/posts/{post_id}/attachments/{attachment_id}")
+def download_attachment(post_id: int, attachment_id: int | None = None, db=Depends(get_db)):
     post = require_post(db, post_id)
     if db.execute("SELECT banned FROM users WHERE id=?", (post["owner_id"],)).fetchone()[0]:
         raise HTTPException(404, "此内容暂不可查看")
+    if attachment_id is None:
+        legacy = legacy_attachment(db, post)
+        attachment_id = legacy["id"] if legacy else None
     row = db.execute(
-        "SELECT filename,content FROM attachments WHERE post_id=?", (post_id,)
+        "SELECT filename,content FROM attachments WHERE post_id=? AND id=?", (post_id, attachment_id)
     ).fetchone()
     if not row:
         raise HTTPException(404, "附件不存在")
@@ -174,7 +200,7 @@ def create(data: PostCreate, user=Depends(student), db=Depends(get_db)):
         ).fetchone()
     ):
         raise HTTPException(404, "草稿不存在")
-    attachment_for_post(db, data.attachment_id, user)
+    attachment_ids = validate_attachments(db, data, user, legacy_id=data.attachment_id)
     created_at = now()
     post_id = db.execute(
         "INSERT INTO posts(owner_id,title,category,description,tags,place,deadline,event_time,extras,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
@@ -194,18 +220,19 @@ def create(data: PostCreate, user=Depends(student), db=Depends(get_db)):
     ).lastrowid
     for role in data.roles:
         db.execute(
-            "INSERT INTO roles(post_id,name,capacity,description,tags) VALUES(?,?,?,?,?)",
+            "INSERT INTO roles(post_id,name,capacity,description,tags,accepting) VALUES(?,?,?,?,?,?)",
             (
                 post_id,
                 role.name,
                 role.capacity,
                 role.description,
                 json.dumps(role.tags, ensure_ascii=False),
+                role.accepting,
             ),
         )
-    if data.attachment_id is not None:
+    for attachment_id in attachment_ids:
         db.execute(
-            "UPDATE attachments SET post_id=? WHERE id=?", (post_id, data.attachment_id)
+            "UPDATE attachments SET post_id=? WHERE id=?", (post_id, attachment_id)
         )
     if data.draft_id is not None:
         db.execute(
@@ -218,23 +245,72 @@ def create(data: PostCreate, user=Depends(student), db=Depends(get_db)):
 def edit(post_id: int, data: PostEdit, user=Depends(student), db=Depends(get_db)):
     post = require_post(db, post_id)
     require_owner(post, user)
-    require_open(post)
-    old_attachment = db.execute(
-        "SELECT id FROM attachments WHERE post_id=?", (post_id,)
-    ).fetchone()
+    if post["status"] == "ended":
+        if (data.title != post["title"] or data.place != post["place"]
+            or data.tags != json.loads(post["tags"])
+            or any(getattr(data, key) is not None for key in ("category", "deadline", "event_time", "roles"))):
+            raise HTTPException(409, "已结束招募仅可修正说明、联系方式和补充资料")
+    if data.category is not None and not db.execute("SELECT 1 FROM categories WHERE name=?", (data.category,)).fetchone():
+        raise HTTPException(422, "请选择系统类别")
+    deadline = post["deadline"]
+    if data.deadline is not None:
+        if data.deadline.tzinfo is None:
+            raise HTTPException(422, "截止时间必须包含时区")
+        if data.deadline < datetime.fromisoformat(post["deadline"]):
+            raise HTTPException(409, "截止时间只允许延长；提前截止请使用结束招募")
+        deadline = data.deadline.astimezone(timezone.utc).isoformat()
+    if data.roles is not None:
+        existing = {row["id"]: row for row in db.execute("SELECT * FROM roles WHERE post_id=?", (post_id,))}
+        ids = [role.id for role in data.roles if role.id is not None]
+        if len(ids) != len(set(ids)) or any(role_id not in existing for role_id in ids):
+            raise HTTPException(422, "岗位不存在、重复或不属于该招募")
+        for role_id in set(existing) - set(ids):
+            if db.execute("SELECT 1 FROM applications WHERE role_id=?", (role_id,)).fetchone():
+                raise HTTPException(409, "有申请记录的岗位不能删除，请停止接收申请")
+        for role in data.roles:
+            if role.id is None:
+                db.execute("INSERT INTO roles(post_id,name,capacity,description,tags,accepting) VALUES(?,?,?,?,?,?)",
+                           (post_id, role.name, role.capacity, role.description, json.dumps(role.tags, ensure_ascii=False), role.accepting))
+                continue
+            old = existing[role.id]
+            accepted = db.execute("SELECT count(*) FROM applications WHERE role_id=? AND status='accepted'", (role.id,)).fetchone()[0]
+            if role.capacity < accepted:
+                raise HTTPException(409, "招募人数不能低于已录取人数")
+            changed = (role.name != old["name"] or role.description != old["description"]
+                       or role.tags != json.loads(old["tags"]) or role.capacity != old["capacity"]
+                       or role.accepting != bool(old["accepting"]))
+            db.execute("UPDATE roles SET name=?,capacity=?,description=?,tags=?,accepting=? WHERE id=?",
+                       (role.name, role.capacity, role.description, json.dumps(role.tags, ensure_ascii=False), role.accepting, role.id))
+            if changed:
+                for row in db.execute("SELECT DISTINCT user_id FROM applications WHERE role_id=?", (role.id,)):
+                    notify(db, row["user_id"], f"岗位「{old['name']}」信息已更新，请查看最新岗位要求与名额。", post_id)
+            if accepted == role.capacity:
+                for application in db.execute("SELECT * FROM applications WHERE role_id=? AND status='pending'", (role.id,)).fetchall():
+                    transition(db, application, "rejected", "岗位名额已满", user["id"])
+        for role_id in set(existing) - set(ids):
+            db.execute("DELETE FROM roles WHERE id=?", (role_id,))
+        if not db.execute("SELECT 1 FROM roles r WHERE r.post_id=? AND r.capacity>(SELECT count(*) FROM applications a WHERE a.role_id=r.id AND a.status='accepted')", (post_id,)).fetchone():
+            db.execute("UPDATE posts SET status='ended',end_reason='filled' WHERE id=?", (post_id,))
+            notify(db, user["id"], "全部岗位已满，招募结束，结果已锁定。", post_id)
+    event_time = data.event_time if data.event_time is not None else post["event_time"]
+    if data.place != post["place"] or event_time != post["event_time"] or deadline != post["deadline"]:
+        for row in db.execute("SELECT DISTINCT user_id FROM applications WHERE post_id=? AND status IN ('pending','accepted')", (post_id,)):
+            notify(db, row["user_id"], "活动时间、地点或招募截止时间已变更，请查看最新安排。", post_id)
+    old_attachment = legacy_attachment(db, post)
     attachment_id = (
         data.attachment_id if "attachment_id" in data.model_fields_set
         else old_attachment["id"] if old_attachment else None
     )
-    attachment_for_post(db, attachment_id, user, post_id)
-    if old_attachment and old_attachment["id"] != attachment_id:
-        db.execute("DELETE FROM attachments WHERE id=?", (old_attachment["id"],))
-    if attachment_id is not None:
+    attachment_ids = validate_attachments(db, data, user, post_id, attachment_id)
+    for row in db.execute("SELECT id FROM attachments WHERE post_id=?", (post_id,)).fetchall():
+        if row["id"] not in attachment_ids:
+            db.execute("DELETE FROM attachments WHERE id=?", (row["id"],))
+    for attachment_id in attachment_ids:
         db.execute(
             "UPDATE attachments SET post_id=? WHERE id=?", (post_id, attachment_id)
         )
     db.execute(
-        "UPDATE posts SET title=?,description=?,place=?,tags=?,extras=?,updated_at=? WHERE id=?",
+        "UPDATE posts SET title=?,description=?,place=?,tags=?,extras=?,updated_at=?,category=?,deadline=?,event_time=? WHERE id=?",
         (
             data.title,
             data.description,
@@ -242,6 +318,9 @@ def edit(post_id: int, data: PostEdit, user=Depends(student), db=Depends(get_db)
             json.dumps(data.tags, ensure_ascii=False),
             data.extras.model_dump_json(),
             now(),
+            data.category if data.category is not None else post["category"],
+            deadline,
+            event_time,
             post_id,
         ),
     )
@@ -256,6 +335,32 @@ def delete(post_id: int, user=Depends(student), db=Depends(get_db)):
         raise HTTPException(409, "已有申请历史，不能删除")
     db.execute("DELETE FROM posts WHERE id=?", (post_id,))
     return {"ok": True}
+
+
+@router.post("/posts/{post_id}/copy-draft", status_code=201)
+def copy_draft(post_id: int, user=Depends(student), db=Depends(get_db)):
+    post = require_post(db, post_id)
+    require_owner(post, user)
+    payload = {key: post[key] for key in ("title", "category", "description", "place")}
+    payload.update(tags=json.loads(post["tags"]), extras=json.loads(post["extras"]), deadline="", event_time="")
+    ids = {}
+    for row in db.execute("SELECT * FROM attachments WHERE post_id=?", (post_id,)).fetchall():
+        ids[row["id"]] = db.execute(
+            "INSERT INTO attachments(owner_id,filename,content_type,content,created_at) VALUES(?,?,?,?,?)",
+            (user["id"], row["filename"], row["content_type"], row["content"], now()),
+        ).lastrowid
+    legacy = legacy_attachment(db, post)
+    payload["attachment_id"] = ids.get(legacy["id"]) if legacy else None
+    payload["attachment_name"] = legacy["filename"] if legacy else ""
+    for item in payload["extras"].get("items", []):
+        if item["type"] == "attachment":
+            item["attachment_id"] = ids[item["attachment_id"]]
+    payload["roles"] = [{"name": role["name"], "capacity": role["capacity"], "description": role["description"],
+                         "tags": json.loads(role["tags"]), "accepting": True}
+                        for role in db.execute("SELECT * FROM roles WHERE post_id=? ORDER BY id", (post_id,))]
+    draft_id = db.execute("INSERT INTO drafts(user_id,payload,updated_at) VALUES(?,?,?)",
+                          (user["id"], json.dumps(payload, ensure_ascii=False), now())).lastrowid
+    return {"id": draft_id}
 
 
 @router.post("/posts/{post_id}/end")
@@ -305,6 +410,8 @@ def apply(
     ).fetchone()
     if not role:
         raise HTTPException(404, "岗位不存在")
+    if not role["accepting"]:
+        raise HTTPException(409, "该岗位已停止接收申请")
     if db.execute(
         "SELECT 1 FROM applications WHERE post_id=? AND user_id=? AND (status='accepted' OR (role_id=? AND status='pending'))",
         (post_id, user["id"], role["id"]),

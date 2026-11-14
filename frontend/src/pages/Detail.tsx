@@ -79,10 +79,22 @@ export function Detail() {
             <h2 style={{ margin: '28px 0 13px' }}>关于这次合作</h2>
             <div className="bodycopy">{post.description}</div>
           </div>
-          {(Object.values(post.extras).some(Boolean) || post.attachment) && (
+          {(Object.entries(post.extras).some(([key, value]) => key === 'items' ? post.extras.items?.length : Boolean(value)) || post.attachment) && (
             <div className="panel">
               <h2>更多信息</h2>
               <div className="extra-grid">
+                {post.extras.items?.map((item, index) => (
+                  <div className="extra-item" key={index}>
+                    <strong>{item.title}</strong>
+                    {item.type === 'text' ? <p className="bodycopy">{item.content}</p> : item.type === 'link' ? (
+                      <SafeLink url={item.content}>{item.content}</SafeLink>
+                    ) : (
+                      <a href={`/api/posts/${post.id}/attachments/${item.attachment_id}`} download>
+                        {post.attachments?.find((a) => a.id === item.attachment_id)?.filename || '下载附件'}
+                      </a>
+                    )}
+                  </div>
+                ))}
                 {extras.map(
                   ([key, label]) =>
                     post.extras[key] && (
@@ -184,11 +196,17 @@ export function Detail() {
             <div className="panel">
               <h3>发布者工具</h3>
               <div className="actions">
-                {!ended && (
                   <Link className="btn secondary" to={'/edit/' + id}>
                     编辑招募
                   </Link>
-                )}
+                <button className="btn secondary" disabled={busy} onClick={async () => {
+                  setBusy(true);
+                  try {
+                    const draft = await write<{ id: number }>(`/posts/${id}/copy-draft`, 'POST');
+                    navigate('/publish?draft=' + draft.id);
+                  } catch (error) { toast((error as Error).message); }
+                  finally { setBusy(false); }
+                }}>复制为新招募</button>
                 <Link className="btn secondary" to={'/posts/' + id + '/applications'}>
                   管理申请
                 </Link>
@@ -214,7 +232,7 @@ export function Detail() {
                   <div className="between">
                     <h3>{r.name}</h3>
                     <Badge>
-                      {r.accepted >= r.capacity
+                      {r.accepting === false ? '已停止接收申请' : r.accepted >= r.capacity
                         ? '岗位已满'
                         : '剩余 ' + (r.capacity - r.accepted) + ' 名'}
                     </Badge>
@@ -230,7 +248,7 @@ export function Detail() {
                     </span>
                     <button
                       className="btn"
-                      disabled={r.accepted >= r.capacity}
+                      disabled={r.accepting === false || r.accepted >= r.capacity}
                       onClick={() => setRole(r)}
                     >
                       申请此岗位

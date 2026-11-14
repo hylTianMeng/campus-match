@@ -29,6 +29,9 @@ def init_db():
     try:
         db.execute("PRAGMA journal_mode=WAL")
         db.executescript((Path(__file__).parent / "schema.sql").read_text())
+        db.execute("DROP INDEX IF EXISTS one_attachment_per_post")
+        if "accepting" not in {row["name"] for row in db.execute("PRAGMA table_info(roles)")}:
+            db.execute("ALTER TABLE roles ADD COLUMN accepting INTEGER NOT NULL DEFAULT 1")
         if "updated_at" not in {
             row["name"] for row in db.execute("PRAGMA table_info(posts)")
         }:
