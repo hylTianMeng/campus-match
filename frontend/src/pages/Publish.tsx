@@ -14,6 +14,7 @@ const blankPost = (): PostInput => ({
   event_time: '',
   tags: [],
   extras: {},
+  attachment_id: null,
   roles: [],
 });
 function localDate(iso: string) {
@@ -28,12 +29,15 @@ export function Publish() {
     { toast } = useSession();
   const [form, setForm] = useState<PostInput>(blankPost),
     [revision, setRevision] = useState(0),
-    [saveStatus, setSaveStatus] = useState<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle'),
+    [saveStatus, setSaveStatus] = useState<'idle' | 'pending' | 'saving' | 'saved' | 'error'>(
+      'idle',
+    ),
     [autoError, setAutoError] = useState(''),
     [postTagText, setPostTagText] = useState(''),
     [roleTagTexts, setRoleTagTexts] = useState<string[]>([]),
     [roleKeys, setRoleKeys] = useState<number[]>([]),
     [busy, setBusy] = useState(false),
+    [uploading, setUploading] = useState(false),
     [error, setError] = useState(''),
     [loading, setLoading] = useState(true),
     [loadError, setLoadError] = useState('');
@@ -74,6 +78,8 @@ export function Publish() {
           if (active)
             loadForm({
               ...p,
+              attachment_id: p.attachment?.id ?? null,
+              attachment_name: p.attachment?.filename ?? '',
               deadline: localDate(p.deadline),
               event_time: localDate(p.event_time),
               roles: p.roles.map(({ name, capacity, description, tags }) => ({
@@ -111,23 +117,57 @@ export function Publish() {
       'roles',
       form.roles.map((r, i) => (i === index ? { ...r, ...values } : r)),
     );
+  async function uploadFile(file: File) {
+    if (file.size > 5 * 1024 * 1024) {
+      setError('附件大小不能超过 5 MB');
+      return;
+    }
+    setUploading(true);
+    setError('');
+    try {
+      const encoded = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+        reader.onerror = () => reject(new Error('读取文件失败'));
+        reader.readAsDataURL(file);
+      });
+      const uploaded = await write<{ id: number; filename: string }>('/attachments', 'POST', {
+        filename: file.name,
+        content_base64: encoded,
+      });
+      setForm((current) => ({
+        ...current,
+        attachment_id: uploaded.id,
+        attachment_name: uploaded.filename,
+      }));
+      latestRevision.current++;
+      setRevision(latestRevision.current);
+      if (!edit) setSaveStatus('pending');
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setUploading(false);
+    }
+  }
   function persistDraft(snapshot: PostInput, targetRevision: number) {
     const currentScope = scope.current;
-    const operation = saveQueue.current.catch(() => {}).then(async () => {
-      if (currentScope !== scope.current || targetRevision <= savedRevision.current) return;
-      setSaveStatus('saving');
-      const currentId = draftIdRef.current;
-      const saved = await write<{ id: number }>(
-        currentId ? '/drafts/' + currentId : '/drafts',
-        currentId ? 'PUT' : 'POST',
-        { payload: snapshot },
-      );
-      if (currentScope !== scope.current) return;
-      draftIdRef.current = saved.id;
-      savedRevision.current = targetRevision;
-      setAutoError('');
-      setSaveStatus(targetRevision >= latestRevision.current ? 'saved' : 'pending');
-    });
+    const operation = saveQueue.current
+      .catch(() => {})
+      .then(async () => {
+        if (currentScope !== scope.current || targetRevision <= savedRevision.current) return;
+        setSaveStatus('saving');
+        const currentId = draftIdRef.current;
+        const saved = await write<{ id: number }>(
+          currentId ? '/drafts/' + currentId : '/drafts',
+          currentId ? 'PUT' : 'POST',
+          { payload: snapshot },
+        );
+        if (currentScope !== scope.current) return;
+        draftIdRef.current = saved.id;
+        savedRevision.current = targetRevision;
+        setAutoError('');
+        setSaveStatus(targetRevision >= latestRevision.current ? 'saved' : 'pending');
+      });
     saveQueue.current = operation.catch(() => {});
     return operation.catch((error: Error) => {
       if (currentScope === scope.current) {
@@ -167,7 +207,7 @@ export function Publish() {
     }
   }
   async function leaveTo(path: string) {
-    if (busy) return;
+    if (busy || uploading) return;
     if (!edit && revision > savedRevision.current) {
       setBusy(true);
       try {
@@ -194,10 +234,14 @@ export function Publish() {
         }
       >
         {!edit && (
-          <Link className="btn secondary" to="/drafts" onClick={(event) => {
-            event.preventDefault();
-            void leaveTo('/drafts');
-          }}>
+          <Link
+            className="btn secondary"
+            to="/drafts"
+            onClick={(event) => {
+              event.preventDefault();
+              void leaveTo('/drafts');
+            }}
+          >
             草稿箱
           </Link>
         )}
@@ -215,11 +259,26 @@ export function Publish() {
           publishing.current = true;
           try {
             if (!edit) await saveQueue.current;
-            const { title, description, place, tags, extras } = form;
+            const {
+              title,
+              description,
+              place,
+              tags,
+              extras,
+              attachment_id,
+              attachment_name: _attachmentName,
+              ...rest
+            } = form;
             const body = edit
-              ? { title, description, place, tags, extras }
+              ? { title, description, place, tags, extras, attachment_id }
               : {
-                  ...form,
+                  ...rest,
+                  title,
+                  description,
+                  place,
+                  tags,
+                  extras,
+                  attachment_id,
                   deadline: new Date(form.deadline).toISOString(),
                   event_time: form.event_time ? new Date(form.event_time).toISOString() : '',
                   draft_id: draftIdRef.current,
@@ -334,7 +393,9 @@ export function Publish() {
                         value={roleTagTexts[i] ?? ''}
                         onChange={(e) => {
                           const value = e.target.value;
-                          setRoleTagTexts((texts) => texts.map((text, j) => j === i ? value : text));
+                          setRoleTagTexts((texts) =>
+                            texts.map((text, j) => (j === i ? value : text)),
+                          );
                           setRole(i, { tags: tagsFrom(value) });
                         }}
                       />
@@ -432,6 +493,41 @@ export function Publish() {
                   />
                 </Field>
               ))}
+              <Field label="上传附件（选填）">
+                <input
+                  type="file"
+                  accept=".pdf,.docx,.png,.jpg,.jpeg,.txt"
+                  disabled={uploading || busy}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) void uploadFile(file);
+                    e.target.value = '';
+                  }}
+                />
+              </Field>
+              <p className="small muted">
+                支持 PDF、Word（DOCX）、PNG、JPG、TXT，最多 5 MB；附件会在招募详情中公开下载。
+              </p>
+              {uploading && (
+                <p className="small" role="status">
+                  附件上传中…
+                </p>
+              )}
+              {form.attachment_id && (
+                <div className="actions">
+                  <span className="small">已选：{form.attachment_name || '附件'}</span>
+                  <button
+                    type="button"
+                    className="link"
+                    onClick={() => {
+                      set('attachment_id', null);
+                      setForm((current) => ({ ...current, attachment_name: '' }));
+                    }}
+                  >
+                    移除附件
+                  </button>
+                </div>
+              )}
             </div>
           </section>
           <aside>
@@ -456,26 +552,39 @@ export function Publish() {
             {edit
               ? '保留原发布时间'
               : `草稿仅自己可见 · ${
-                  saveStatus === 'saving' ? '自动保存中…'
-                  : saveStatus === 'saved' ? '已自动保存'
-                  : saveStatus === 'error' ? `自动保存失败：${autoError}`
-                  : saveStatus === 'pending' ? '等待自动保存…'
-                  : '修改后自动保存'
+                  saveStatus === 'saving'
+                    ? '自动保存中…'
+                    : saveStatus === 'saved'
+                      ? '已自动保存'
+                      : saveStatus === 'error'
+                        ? `自动保存失败：${autoError}`
+                        : saveStatus === 'pending'
+                          ? '等待自动保存…'
+                          : '修改后自动保存'
                 }`}
           </span>
           <div className="actions">
-            <Link className="btn ghost" to="/posts" onClick={(event) => {
-              event.preventDefault();
-              void leaveTo('/posts');
-            }}>
+            <Link
+              className="btn ghost"
+              to="/posts"
+              onClick={(event) => {
+                event.preventDefault();
+                void leaveTo('/posts');
+              }}
+            >
               返回
             </Link>
             {!edit && (
-              <button type="button" className="btn secondary" disabled={busy} onClick={saveDraft}>
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={busy || uploading}
+                onClick={saveDraft}
+              >
                 手动保存草稿
               </button>
             )}
-            <button className="btn" disabled={busy}>
+            <button className="btn" disabled={busy || uploading}>
               {busy ? '保存中…' : edit ? '保存一般信息' : '正式发布招募'}
             </button>
           </div>

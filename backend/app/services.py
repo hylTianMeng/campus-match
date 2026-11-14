@@ -27,6 +27,11 @@ def post_view(db, post, viewer=None):
     result = dict(post)
     result["tags"] = json.loads(post["tags"])
     result["extras"] = json.loads(post["extras"])
+    attachment = db.execute(
+        "SELECT id,filename,length(content) AS size FROM attachments WHERE post_id=?",
+        (post["id"],),
+    ).fetchone()
+    result["attachment"] = dict(attachment) if attachment else None
     owner = db.execute("SELECT * FROM users WHERE id=?", (post["owner_id"],)).fetchone()
     result["owner"] = (
         public_user(owner)

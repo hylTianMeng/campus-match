@@ -42,6 +42,7 @@ export interface Post {
   deadline: string;
   event_time: string;
   extras: Partial<Extras>;
+  attachment: { id: number; filename: string; size: number } | null;
   created_at: string;
   updated_at: string;
   status: 'open' | 'ended';
@@ -83,6 +84,8 @@ export interface PostInput {
   event_time: string;
   tags: string[];
   extras: Partial<Extras>;
+  attachment_id?: number | null;
+  attachment_name?: string;
   roles: RoleInput[];
 }
 export interface Draft {

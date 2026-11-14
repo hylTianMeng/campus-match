@@ -1,11 +1,103 @@
 import json
+import base64
+import binascii
+from datetime import datetime, timedelta, timezone
+from pathlib import PurePath
+from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from ..db import get_db, now, notify
 from ..auth import optional_user, current_user, student
-from ..schemas import PostCreate, PostEdit, ApplicationCreate, Decision, Draft
+from ..schemas import PostCreate, PostEdit, ApplicationCreate, Decision, Draft, AttachmentUpload
 from ..services import require_post, require_owner, require_open, post_view, decide
 
 router = APIRouter(prefix="/api", tags=["招募与申请"])
+
+MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024
+ATTACHMENT_TYPES = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".txt": "text/plain; charset=utf-8",
+}
+
+
+def attachment_for_post(db, attachment_id, user, post_id=None):
+    if attachment_id is None:
+        return None
+    row = db.execute(
+        "SELECT id,post_id FROM attachments WHERE id=? AND owner_id=?",
+        (attachment_id, user["id"]),
+    ).fetchone()
+    if not row or row["post_id"] not in (None, post_id):
+        raise HTTPException(422, "附件不存在或已用于其他招募")
+    return row
+
+
+@router.post("/attachments", status_code=201)
+def upload_attachment(data: AttachmentUpload, user=Depends(student), db=Depends(get_db)):
+    filename = data.filename.strip()
+    if filename in (".", "..") or any(c in filename for c in "/\\\r\n\x00"):
+        raise HTTPException(422, "文件名无效")
+    suffix = PurePath(filename).suffix.lower()
+    if suffix not in ATTACHMENT_TYPES:
+        raise HTTPException(422, "仅支持 PDF、DOCX、PNG、JPG 和 TXT 文件")
+    try:
+        content = base64.b64decode(data.content_base64, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(422, "文件内容无效")
+    if not content or len(content) > MAX_ATTACHMENT_SIZE:
+        raise HTTPException(422, "附件大小需在 5 MB 以内")
+    if suffix == ".txt":
+        try:
+            valid = bool(content.decode("utf-8").strip()) and b"\x00" not in content
+        except UnicodeDecodeError:
+            valid = False
+    else:
+        valid = (
+            content.startswith(b"%PDF-") if suffix == ".pdf" else
+            content.startswith(b"PK\x03\x04") if suffix == ".docx" else
+            content.startswith(b"\x89PNG\r\n\x1a\n") if suffix == ".png" else
+            content.startswith(b"\xff\xd8\xff")
+        )
+    if not valid:
+        raise HTTPException(422, "文件内容与格式不符")
+    referenced = [
+        json.loads(row["payload"]).get("attachment_id")
+        for row in db.execute("SELECT payload FROM drafts WHERE user_id=?", (user["id"],))
+    ]
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    for row in db.execute(
+        "SELECT id FROM attachments WHERE owner_id=? AND post_id IS NULL AND created_at<?",
+        (user["id"], cutoff),
+    ).fetchall():
+        if row["id"] not in referenced:
+            db.execute("DELETE FROM attachments WHERE id=?", (row["id"],))
+    attachment_id = db.execute(
+        "INSERT INTO attachments(owner_id,filename,content_type,content,created_at) VALUES(?,?,?,?,?)",
+        (user["id"], filename, ATTACHMENT_TYPES[suffix], content, now()),
+    ).lastrowid
+    return {"id": attachment_id, "filename": filename, "size": len(content)}
+
+
+@router.get("/posts/{post_id}/attachment")
+def download_attachment(post_id: int, db=Depends(get_db)):
+    post = require_post(db, post_id)
+    if db.execute("SELECT banned FROM users WHERE id=?", (post["owner_id"],)).fetchone()[0]:
+        raise HTTPException(404, "此内容暂不可查看")
+    row = db.execute(
+        "SELECT filename,content FROM attachments WHERE post_id=?", (post_id,)
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "附件不存在")
+    return Response(
+        content=row["content"],
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(row["filename"]),
+                 "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.get("/categories")
@@ -60,6 +152,7 @@ def create(data: PostCreate, user=Depends(student), db=Depends(get_db)):
         ).fetchone()
     ):
         raise HTTPException(404, "草稿不存在")
+    attachment_for_post(db, data.attachment_id, user)
     created_at = now()
     post_id = db.execute(
         "INSERT INTO posts(owner_id,title,category,description,tags,place,deadline,event_time,extras,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
@@ -88,6 +181,10 @@ def create(data: PostCreate, user=Depends(student), db=Depends(get_db)):
                 json.dumps(role.tags, ensure_ascii=False),
             ),
         )
+    if data.attachment_id is not None:
+        db.execute(
+            "UPDATE attachments SET post_id=? WHERE id=?", (post_id, data.attachment_id)
+        )
     if data.draft_id is not None:
         db.execute(
             "DELETE FROM drafts WHERE id=? AND user_id=?", (data.draft_id, user["id"])
@@ -100,6 +197,20 @@ def edit(post_id: int, data: PostEdit, user=Depends(student), db=Depends(get_db)
     post = require_post(db, post_id)
     require_owner(post, user)
     require_open(post)
+    old_attachment = db.execute(
+        "SELECT id FROM attachments WHERE post_id=?", (post_id,)
+    ).fetchone()
+    attachment_id = (
+        data.attachment_id if "attachment_id" in data.model_fields_set
+        else old_attachment["id"] if old_attachment else None
+    )
+    attachment_for_post(db, attachment_id, user, post_id)
+    if old_attachment and old_attachment["id"] != attachment_id:
+        db.execute("DELETE FROM attachments WHERE id=?", (old_attachment["id"],))
+    if attachment_id is not None:
+        db.execute(
+            "UPDATE attachments SET post_id=? WHERE id=?", (post_id, attachment_id)
+        )
     db.execute(
         "UPDATE posts SET title=?,description=?,place=?,tags=?,extras=?,updated_at=? WHERE id=?",
         (

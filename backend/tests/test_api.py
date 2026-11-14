@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+import base64
 import sqlite3
 from datetime import datetime, timezone, timedelta
 from fastapi.testclient import TestClient
@@ -43,6 +44,72 @@ def decision(client, app_id, action="accept"):
         f"/api/applications/{app_id}/decision",
         json={"action": action, "reason": "测试操作"},
     )
+
+
+def test_post_attachment_upload_publish_replace_and_download(client):
+    login(client, "chen")
+    content = b"%PDF-1.4\nattachment test\n"
+    uploaded = client.post(
+        "/api/attachments",
+        json={"filename": "项目说明.pdf", "content_base64": base64.b64encode(content).decode()},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    attachment_id = uploaded.json()["id"]
+    draft = client.post(
+        "/api/drafts", json={"payload": {"attachment_id": attachment_id, "attachment_name": "项目说明.pdf"}}
+    )
+    assert draft.status_code == 201
+    assert client.get("/api/drafts").json()[0]["payload"]["attachment_id"] == attachment_id
+    post_data = {
+        "title": "带附件的招募", "category": "课程项目", "description": "一起完成项目",
+        "deadline": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat(),
+        "roles": [{"name": "开发", "capacity": 1}],
+        "attachment_id": attachment_id, "draft_id": draft.json()["id"],
+    }
+    login(client, "lin")
+    denied = client.post("/api/posts", json={**post_data, "draft_id": None})
+    assert denied.status_code == 422
+    login(client, "chen")
+    post = client.post("/api/posts", json=post_data)
+    assert post.status_code == 201, post.text
+    post_id = post.json()["id"]
+    assert post.json()["attachment"]["filename"] == "项目说明.pdf"
+    assert client.get(f"/api/posts/{post_id}/attachment").content == content
+    assert "attachment" in client.get(f"/api/posts/{post_id}/attachment").headers["content-disposition"]
+    replacement = client.post(
+        "/api/attachments",
+        json={"filename": "新说明.txt", "content_base64": base64.b64encode("更新版".encode()).decode()},
+    )
+    assert replacement.status_code == 201
+    edited = client.patch(
+        f"/api/posts/{post_id}",
+        json={"title": "带附件的招募", "description": "一起完成项目", "attachment_id": replacement.json()["id"]},
+    )
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["attachment"]["filename"] == "新说明.txt"
+    assert client.get(f"/api/posts/{post_id}/attachment").content == "更新版".encode()
+    removed = client.patch(
+        f"/api/posts/{post_id}",
+        json={"title": "带附件的招募", "description": "一起完成项目", "attachment_id": None},
+    )
+    assert removed.status_code == 200
+    assert removed.json()["attachment"] is None
+    assert client.get(f"/api/posts/{post_id}/attachment").status_code == 404
+
+
+def test_attachment_rejects_bad_format_and_size(client):
+    login(client, "chen")
+    for filename, content in [("bad.pdf", b"not a PDF"), ("bad.exe", b"run")]:
+        response = client.post(
+            "/api/attachments",
+            json={"filename": filename, "content_base64": base64.b64encode(content).decode()},
+        )
+        assert response.status_code == 422
+    too_large = client.post(
+        "/api/attachments",
+        json={"filename": "large.txt", "content_base64": base64.b64encode(b"x" * (5 * 1024 * 1024 + 1)).decode()},
+    )
+    assert too_large.status_code == 422
 
 
 def test_public_search_auth_and_csrf(client):

@@ -64,6 +64,7 @@ class PostEdit(Input):
     place: str = Field(default="", max_length=200)
     tags: List[str] = Field(default_factory=list, max_length=20)
     extras: Extras = Field(default_factory=Extras)
+    attachment_id: Optional[int] = None
 
 
 class PostCreate(PostEdit):
@@ -103,6 +104,11 @@ class Decision(Input):
 
 class Draft(Input):
     payload: Dict[str, Any]
+
+
+class AttachmentUpload(Input):
+    filename: str = Field(min_length=1, max_length=255)
+    content_base64: str = Field(min_length=1, max_length=7000000)
 
 
 class Message(Input):

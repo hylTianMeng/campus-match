@@ -79,7 +79,7 @@ export function Detail() {
             <h2 style={{ margin: '28px 0 13px' }}>关于这次合作</h2>
             <div className="bodycopy">{post.description}</div>
           </div>
-          {Object.values(post.extras).some(Boolean) && (
+          {(Object.values(post.extras).some(Boolean) || post.attachment) && (
             <div className="panel">
               <h2>更多信息</h2>
               <div className="extra-grid">
@@ -102,6 +102,15 @@ export function Detail() {
                   <div className="extra-item">
                     <strong>参考附件</strong>
                     <SafeLink url={post.extras.attachmentLink}>查看附件</SafeLink>
+                  </div>
+                )}
+                {post.attachment && (
+                  <div className="extra-item">
+                    <strong>上传的附件</strong>
+                    <a href={'/api/posts/' + post.id + '/attachment'} download>
+                      {post.attachment.filename}（{(post.attachment.size / 1024 / 1024).toFixed(2)}{' '}
+                      MB）
+                    </a>
                   </div>
                 )}
               </div>

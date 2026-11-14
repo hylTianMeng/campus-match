@@ -44,6 +44,14 @@ CREATE TABLE IF NOT EXISTS application_events(
 CREATE TABLE IF NOT EXISTS drafts(
  id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), payload TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS attachments(
+ id INTEGER PRIMARY KEY, owner_id INTEGER NOT NULL REFERENCES users(id),
+ post_id INTEGER REFERENCES posts(id) ON DELETE CASCADE,
+ filename TEXT NOT NULL, content_type TEXT NOT NULL, content BLOB NOT NULL,
+ created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS attachments_post ON attachments(post_id);
+CREATE UNIQUE INDEX IF NOT EXISTS one_attachment_per_post ON attachments(post_id);
 CREATE TABLE IF NOT EXISTS favorites(
  user_id INTEGER NOT NULL REFERENCES users(id), post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
  PRIMARY KEY(user_id,post_id)

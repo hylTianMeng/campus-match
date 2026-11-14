@@ -42,11 +42,18 @@ test('real draft → publish → apply → owner approval → notification', asy
   await owner.goto('/#/publish');
   const title = '端到端测试：校园协作';
   await owner.getByLabel('招募标题 *', { exact: true }).fill(title);
+  await owner.getByLabel('上传附件（选填）').setInputFiles({
+    name: '项目说明.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.4\nCampusCrew attachment\n'),
+  });
+  await expect(owner.getByText('已选：项目说明.pdf')).toBeVisible();
   await owner.getByRole('button', { name: '手动保存草稿' }).click();
   await expect(owner.getByRole('status')).toHaveText('草稿已保存');
   await owner.getByRole('link', { name: '草稿箱', exact: true }).click();
   await owner.getByRole('link', { name: '继续编辑' }).click();
   await expect(owner.getByLabel('招募标题 *', { exact: true })).toHaveValue(title);
+  await expect(owner.getByText('已选：项目说明.pdf')).toBeVisible();
   await owner.getByLabel('一级分类 *').selectOption('课程项目');
   await owner.getByLabel('招募说明 *').fill('共同完成可运行的校园协作项目。');
   await owner.getByRole('button', { name: '＋ 新增岗位' }).click();
@@ -63,6 +70,7 @@ test('real draft → publish → apply → owner approval → notification', asy
   await expect(owner.getByRole('heading', { name: title, exact: true })).toBeVisible();
   const detail = owner.url();
   await expect(owner.getByText('一份可以演示的作品', { exact: true })).toBeVisible();
+  await expect(owner.getByRole('link', { name: /项目说明.pdf/ })).toBeVisible();
   await login(applicant, 'lin');
   await applicant.goto(detail);
   await applicant.getByRole('button', { name: '☆ 收藏招募' }).click();
