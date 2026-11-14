@@ -29,6 +29,11 @@ def init_db():
     try:
         db.execute("PRAGMA journal_mode=WAL")
         db.executescript((Path(__file__).parent / "schema.sql").read_text())
+        if "updated_at" not in {
+            row["name"] for row in db.execute("PRAGMA table_info(posts)")
+        }:
+            db.execute("ALTER TABLE posts ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
+            db.execute("UPDATE posts SET updated_at=created_at WHERE updated_at=''")
     finally:
         db.close()
 

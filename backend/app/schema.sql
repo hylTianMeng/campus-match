@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS posts(
  tags TEXT NOT NULL DEFAULT '[]', place TEXT NOT NULL DEFAULT '', deadline TEXT NOT NULL,
  event_time TEXT NOT NULL DEFAULT '', extras TEXT NOT NULL DEFAULT '{}',
  status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','ended')),
- end_reason TEXT, created_at TEXT NOT NULL
+ end_reason TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS roles(
  id INTEGER PRIMARY KEY, post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,

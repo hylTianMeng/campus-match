@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, useData, write } from '../api';
 import { useSession } from '../context';
@@ -27,7 +27,12 @@ export function Publish() {
     navigate = useNavigate(),
     { toast } = useSession();
   const [form, setForm] = useState<PostInput>(blankPost),
-    [draftId, setDraftId] = useState<number | undefined>(),
+    [revision, setRevision] = useState(0),
+    [saveStatus, setSaveStatus] = useState<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle'),
+    [autoError, setAutoError] = useState(''),
+    [postTagText, setPostTagText] = useState(''),
+    [roleTagTexts, setRoleTagTexts] = useState<string[]>([]),
+    [roleKeys, setRoleKeys] = useState<number[]>([]),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [loading, setLoading] = useState(true),
@@ -35,17 +40,39 @@ export function Publish() {
   const categories = useData<string[]>('/categories');
   const edit = Boolean(id);
   const sourceDraft = params.get('draft');
+  const nextRoleKey = useRef(0);
+  const draftIdRef = useRef<number | undefined>(undefined);
+  const latestRevision = useRef(0);
+  const savedRevision = useRef(0);
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
+  const scope = useRef(0);
+  const publishing = useRef(false);
+  function loadForm(value: PostInput, loadedDraftId?: number) {
+    setForm(value);
+    setPostTagText(value.tags.join(', '));
+    setRoleTagTexts(value.roles.map((role) => role.tags.join(', ')));
+    setRoleKeys(value.roles.map(() => nextRoleKey.current++));
+    draftIdRef.current = loadedDraftId;
+    latestRevision.current = 0;
+    savedRevision.current = loadedDraftId ? 0 : -1;
+    setRevision(0);
+    setSaveStatus('idle');
+    setAutoError('');
+  }
   useEffect(() => {
     let active = true;
+    scope.current++;
     setLoading(true);
     setLoadError('');
-    setDraftId(undefined);
+    draftIdRef.current = undefined;
+    publishing.current = false;
     const load = async () => {
       try {
         if (id) {
           const p = await api<Post>('/posts/' + id);
+          if (p.status === 'ended') throw new Error('招募已结束，不能编辑');
           if (active)
-            setForm({
+            loadForm({
               ...p,
               deadline: localDate(p.deadline),
               event_time: localDate(p.event_time),
@@ -60,11 +87,8 @@ export function Publish() {
           const drafts = await api<Draft[]>('/drafts');
           const draft = drafts.find((d) => d.id === +sourceDraft);
           if (!draft) throw new Error('草稿不存在');
-          if (active) {
-            setForm({ ...blankPost(), ...draft.payload });
-            setDraftId(draft.id);
-          }
-        } else if (active) setForm(blankPost());
+          if (active) loadForm({ ...blankPost(), ...draft.payload }, draft.id);
+        } else if (active) loadForm(blankPost());
       } catch (e) {
         if (active) setLoadError((e as Error).message);
       } finally {
@@ -76,29 +100,86 @@ export function Publish() {
       active = false;
     };
   }, [id, sourceDraft]);
-  const set = <K extends keyof PostInput>(key: K, value: PostInput[K]) =>
+  const set = <K extends keyof PostInput>(key: K, value: PostInput[K]) => {
     setForm((f) => ({ ...f, [key]: value }));
+    latestRevision.current++;
+    setRevision(latestRevision.current);
+    if (!edit) setSaveStatus('pending');
+  };
   const setRole = (index: number, values: Partial<RoleInput>) =>
     set(
       'roles',
       form.roles.map((r, i) => (i === index ? { ...r, ...values } : r)),
     );
+  function persistDraft(snapshot: PostInput, targetRevision: number) {
+    const currentScope = scope.current;
+    const operation = saveQueue.current.catch(() => {}).then(async () => {
+      if (currentScope !== scope.current || targetRevision <= savedRevision.current) return;
+      setSaveStatus('saving');
+      const currentId = draftIdRef.current;
+      const saved = await write<{ id: number }>(
+        currentId ? '/drafts/' + currentId : '/drafts',
+        currentId ? 'PUT' : 'POST',
+        { payload: snapshot },
+      );
+      if (currentScope !== scope.current) return;
+      draftIdRef.current = saved.id;
+      savedRevision.current = targetRevision;
+      setAutoError('');
+      setSaveStatus(targetRevision >= latestRevision.current ? 'saved' : 'pending');
+    });
+    saveQueue.current = operation.catch(() => {});
+    return operation.catch((error: Error) => {
+      if (currentScope === scope.current) {
+        setSaveStatus('error');
+        setAutoError(error.message);
+      }
+      throw error;
+    });
+  }
+  useEffect(() => {
+    if (edit || loading || revision === 0) return;
+    const timer = window.setTimeout(() => {
+      if (!publishing.current) void persistDraft(form, revision).catch(() => {});
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [edit, form, loading, revision]);
+  useEffect(() => {
+    if (edit) return;
+    const warnIfUnsaved = (event: BeforeUnloadEvent) => {
+      if (latestRevision.current <= savedRevision.current) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warnIfUnsaved);
+    return () => window.removeEventListener('beforeunload', warnIfUnsaved);
+  }, [edit]);
   async function saveDraft() {
     setBusy(true);
     setError('');
     try {
-      const saved = await write<{ id: number }>(
-        draftId ? '/drafts/' + draftId : '/drafts',
-        draftId ? 'PUT' : 'POST',
-        { payload: form },
-      );
-      setDraftId(saved.id);
+      await persistDraft(form, revision);
       toast('草稿已保存');
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
+  }
+  async function leaveTo(path: string) {
+    if (busy) return;
+    if (!edit && revision > savedRevision.current) {
+      setBusy(true);
+      try {
+        await persistDraft(form, revision);
+      } catch (e) {
+        setError((e as Error).message);
+        setBusy(false);
+        return;
+      }
+      setBusy(false);
+    }
+    navigate(path);
   }
   if (loading) return <LoadState loading />;
   if (loadError) return <ErrorNote error={loadError} />;
@@ -109,11 +190,14 @@ export function Publish() {
         sub={
           edit
             ? '仅保存一般信息；不会改变原发布时间或重新开放招募。'
-            : '按岗位描述合作期待。草稿由你手动保存。'
+            : '按岗位描述合作期待。填写时会自动保存为私有草稿。'
         }
       >
         {!edit && (
-          <Link className="btn secondary" to="/drafts">
+          <Link className="btn secondary" to="/drafts" onClick={(event) => {
+            event.preventDefault();
+            void leaveTo('/drafts');
+          }}>
             草稿箱
           </Link>
         )}
@@ -128,7 +212,9 @@ export function Publish() {
             return;
           }
           setBusy(true);
+          publishing.current = true;
           try {
+            if (!edit) await saveQueue.current;
             const { title, description, place, tags, extras } = form;
             const body = edit
               ? { title, description, place, tags, extras }
@@ -136,7 +222,7 @@ export function Publish() {
                   ...form,
                   deadline: new Date(form.deadline).toISOString(),
                   event_time: form.event_time ? new Date(form.event_time).toISOString() : '',
-                  draft_id: draftId,
+                  draft_id: draftIdRef.current,
                 };
             const p = await write<Post>(
               edit ? '/posts/' + id : '/posts',
@@ -147,6 +233,9 @@ export function Publish() {
             navigate('/detail/' + p.id);
           } catch (e) {
             setError((e as Error).message);
+            publishing.current = false;
+            if (!edit && revision > savedRevision.current)
+              void persistDraft(form, revision).catch(() => {});
           } finally {
             setBusy(false);
           }
@@ -184,6 +273,7 @@ export function Publish() {
                   onChange={(e) => set('extras', { ...form.extras, contact: e.target.value })}
                 />
               </Field>
+              <p className="small muted">填写后会在公开招募详情中展示，访客也可查看。</p>
               <Field label="招募说明 *">
                 <textarea
                   required
@@ -198,19 +288,21 @@ export function Publish() {
             <div className="panel">
               <h2>02 / 招募岗位</h2>
               {form.roles.map((r, i) => (
-                <div className="roleform" key={i}>
+                <div className="roleform" key={roleKeys[i]}>
                   <div className="between">
                     <h3>岗位 {i + 1}</h3>
                     {!edit && (
                       <button
                         className="link"
                         type="button"
-                        onClick={() =>
+                        onClick={() => {
+                          setRoleKeys((keys) => keys.filter((_, j) => i !== j));
+                          setRoleTagTexts((texts) => texts.filter((_, j) => i !== j));
                           set(
                             'roles',
                             form.roles.filter((_, j) => i !== j),
-                          )
-                        }
+                          );
+                        }}
                       >
                         删除岗位
                       </button>
@@ -239,8 +331,12 @@ export function Publish() {
                     <Field label="技能标签">
                       <input
                         disabled={edit}
-                        defaultValue={r.tags.join(', ')}
-                        onBlur={(e) => setRole(i, { tags: tagsFrom(e.target.value) })}
+                        value={roleTagTexts[i] ?? ''}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setRoleTagTexts((texts) => texts.map((text, j) => j === i ? value : text));
+                          setRole(i, { tags: tagsFrom(value) });
+                        }}
                       />
                     </Field>
                     <Field label="岗位描述">
@@ -258,7 +354,11 @@ export function Publish() {
                   <button
                     type="button"
                     className="btn secondary"
-                    onClick={() => set('roles', [...form.roles, blankRole()])}
+                    onClick={() => {
+                      setRoleKeys((keys) => [...keys, nextRoleKey.current++]);
+                      setRoleTagTexts((texts) => [...texts, '']);
+                      set('roles', [...form.roles, blankRole()]);
+                    }}
                   >
                     ＋ 新增岗位
                   </button>
@@ -290,8 +390,11 @@ export function Publish() {
                 </Field>
                 <Field label="招募标签（选填）">
                   <input
-                    defaultValue={form.tags.join(', ')}
-                    onBlur={(e) => set('tags', tagsFrom(e.target.value))}
+                    value={postTagText}
+                    onChange={(e) => {
+                      setPostTagText(e.target.value);
+                      set('tags', tagsFrom(e.target.value));
+                    }}
                   />
                 </Field>
               </div>
@@ -350,10 +453,21 @@ export function Publish() {
         <ErrorNote error={error} />
         <div className="footbar">
           <span className="small muted">
-            {edit ? '保留原发布时间' : '草稿仅自己可见 · 正式发布后直接公开'}
+            {edit
+              ? '保留原发布时间'
+              : `草稿仅自己可见 · ${
+                  saveStatus === 'saving' ? '自动保存中…'
+                  : saveStatus === 'saved' ? '已自动保存'
+                  : saveStatus === 'error' ? `自动保存失败：${autoError}`
+                  : saveStatus === 'pending' ? '等待自动保存…'
+                  : '修改后自动保存'
+                }`}
           </span>
           <div className="actions">
-            <Link className="btn ghost" to="/posts">
+            <Link className="btn ghost" to="/posts" onClick={(event) => {
+              event.preventDefault();
+              void leaveTo('/posts');
+            }}>
               返回
             </Link>
             {!edit && (

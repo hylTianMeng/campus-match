@@ -43,6 +43,7 @@ export interface Post {
   event_time: string;
   extras: Partial<Extras>;
   created_at: string;
+  updated_at: string;
   status: 'open' | 'ended';
   end_reason?: string;
   owner: Person;

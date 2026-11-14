@@ -68,6 +68,9 @@ export function Detail() {
             <p className="small">
               发布于 {date(post.created_at)} · 截止 {date(post.deadline)}
             </p>
+            {post.updated_at !== post.created_at && (
+              <p className="small">更新于 {date(post.updated_at)}</p>
+            )}
             <p className="small" style={{ marginTop: 8 }}>
               活动安排：{post.event_time ? date(post.event_time) : '时间待定'} /{' '}
               {post.place || '地点待定'}
@@ -172,9 +175,11 @@ export function Detail() {
             <div className="panel">
               <h3>发布者工具</h3>
               <div className="actions">
-                <Link className="btn secondary" to={'/edit/' + id}>
-                  编辑招募
-                </Link>
+                {!ended && (
+                  <Link className="btn secondary" to={'/edit/' + id}>
+                    编辑招募
+                  </Link>
+                )}
                 <Link className="btn secondary" to={'/posts/' + id + '/applications'}>
                   管理申请
                 </Link>

@@ -60,8 +60,9 @@ def create(data: PostCreate, user=Depends(student), db=Depends(get_db)):
         ).fetchone()
     ):
         raise HTTPException(404, "草稿不存在")
+    created_at = now()
     post_id = db.execute(
-        "INSERT INTO posts(owner_id,title,category,description,tags,place,deadline,event_time,extras,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO posts(owner_id,title,category,description,tags,place,deadline,event_time,extras,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
         (
             user["id"],
             data.title,
@@ -72,7 +73,8 @@ def create(data: PostCreate, user=Depends(student), db=Depends(get_db)):
             data.deadline.isoformat(),
             data.event_time,
             data.extras.model_dump_json(),
-            now(),
+            created_at,
+            created_at,
         ),
     ).lastrowid
     for role in data.roles:
@@ -99,13 +101,14 @@ def edit(post_id: int, data: PostEdit, user=Depends(student), db=Depends(get_db)
     require_owner(post, user)
     require_open(post)
     db.execute(
-        "UPDATE posts SET title=?,description=?,place=?,tags=?,extras=? WHERE id=?",
+        "UPDATE posts SET title=?,description=?,place=?,tags=?,extras=?,updated_at=? WHERE id=?",
         (
             data.title,
             data.description,
             data.place,
             json.dumps(data.tags, ensure_ascii=False),
             data.extras.model_dump_json(),
+            now(),
             post_id,
         ),
     )

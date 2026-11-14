@@ -71,6 +71,7 @@ def seed():
                 ),
             )
         for i, title in enumerate(TITLES):
+            created_at = now()
             deadline = (
                 datetime.now(timezone.utc) + timedelta(days=[1, 2, 6, 14, 5, 20][i])
             ).isoformat()
@@ -83,7 +84,7 @@ def seed():
                 CATEGORIES[4],
             ][i]
             post_id = db.execute(
-                "INSERT INTO posts(owner_id,title,category,description,tags,place,deadline,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                "INSERT INTO posts(owner_id,title,category,description,tags,place,deadline,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
                 (
                     [2, 1, 3, 4, 2, 1][i],
                     title,
@@ -96,7 +97,8 @@ def seed():
                     json.dumps(TAGS[i], ensure_ascii=False),
                     "线上协作" if i % 2 else "校内 / 紫荆",
                     deadline,
-                    now(),
+                    created_at,
+                    created_at,
                 ),
             ).lastrowid
             for name, capacity, tags in [

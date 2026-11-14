@@ -112,7 +112,7 @@ export function Posts() {
               </h3>
               <p>
                 {p.category} · {p.status === 'open' ? '招募中' : '已结束'} · {p.pending_count}{' '}
-                人待审核
+                人待审核 · 更新于 {date(p.updated_at)}
               </p>
             </div>
             <div className="actions">
@@ -165,7 +165,7 @@ export function Drafts() {
     { ask, modal } = useConfirmation(data.refresh);
   return (
     <>
-      <Header title="草稿箱" sub="缺项也可以保存。只有点击保存才会更新草稿。">
+      <Header title="草稿箱" sub="缺项也可以保存。填写时自动保存，也可以手动保存。">
         <Link className="btn" to="/publish">
           ＋ 新建招募
         </Link>
@@ -184,7 +184,7 @@ export function Drafts() {
             <div className="grow">
               <h3>{d.payload.title || '未命名招募'}</h3>
               <p>
-                最近手动保存：{date(d.updated_at)} · {d.payload.roles?.length ?? 0} 个岗位
+                最近保存：{date(d.updated_at)} · {d.payload.roles?.length ?? 0} 个岗位
               </p>
             </div>
             <div className="actions">

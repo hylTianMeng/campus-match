@@ -1,8 +1,9 @@
 from concurrent.futures import ThreadPoolExecutor
+import sqlite3
 from datetime import datetime, timezone, timedelta
 from fastapi.testclient import TestClient
 from app.main import app
-from app.db import connect, now
+from app.db import connect, init_db, now
 from conftest import login
 
 
@@ -112,6 +113,15 @@ def test_drafts_ownership_edit_locks_and_reapply(client):
     assert client.get("/api/drafts").json() == []
     assert client.delete(f"/api/drafts/{draft['id']}").status_code == 404
     post = new_post(client, (2,))
+    assert post["updated_at"] == post["created_at"]
+    edited = client.patch(
+        f"/api/posts/{post['id']}",
+        json={"title": "修改", "description": "描述", "extras": {"contact": "公开邮箱@example.test"}},
+    )
+    assert edited.status_code == 200
+    assert edited.json()["updated_at"] > post["created_at"]
+    assert edited.json()["created_at"] == post["created_at"]
+    assert edited.json()["extras"]["contact"] == "公开邮箱@example.test"
     assert (
         client.patch(
             f"/api/posts/{post['id']}",
@@ -132,6 +142,28 @@ def test_drafts_ownership_edit_locks_and_reapply(client):
     login(client, "chen")
     assert client.delete(f"/api/posts/{post['id']}").status_code == 409
     assert client.post(f"/api/posts/{post['id']}/end", json={}).status_code == 409
+
+
+def test_ended_post_cannot_be_edited(client):
+    login(client, "chen")
+    post = new_post(client, (2,))
+    assert client.post(f"/api/posts/{post['id']}/end", json={}).status_code == 200
+    assert client.patch(
+        f"/api/posts/{post['id']}",
+        json={"title": "结束后改写", "description": "描述"},
+    ).status_code == 409
+
+
+def test_existing_posts_receive_updated_at(tmp_path, monkeypatch):
+    path = tmp_path / "legacy.sqlite3"
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE posts(id INTEGER PRIMARY KEY, created_at TEXT NOT NULL)")
+        db.execute("INSERT INTO posts(created_at) VALUES('2026-01-01T00:00:00+00:00')")
+    monkeypatch.setenv("DATABASE_PATH", str(path))
+    init_db()
+    with connect() as db:
+        row = db.execute("SELECT created_at,updated_at FROM posts").fetchone()
+        assert row["updated_at"] == row["created_at"]
 
 
 def test_expiry_and_favorites(client):
