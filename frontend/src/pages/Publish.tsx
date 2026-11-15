@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, useData, write } from '../api';
 import { useSession } from '../context';
 import type { Draft, Post, PostInput, RoleInput, InformationItem } from '../types';
-import { Header, Field, ErrorNote, LoadState, tagsFrom } from '../components/ui';
+import { Header, Field, ErrorNote, LoadState, Modal, tagsFrom } from '../components/ui';
 const blankRole = (): RoleInput => ({ name: '', capacity: 1, description: '', tags: [] });
 const blankPost = (): PostInput => ({
   title: '',
@@ -42,7 +42,10 @@ export function Publish() {
     [uploading, setUploading] = useState(false),
     [error, setError] = useState(''),
     [loading, setLoading] = useState(true),
-    [loadError, setLoadError] = useState('');
+    [loadError, setLoadError] = useState(''),
+    [confirmNoRoles, setConfirmNoRoles] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null),
+    allowNoRoles = useRef(false);
   const categories = useData<string[]>('/categories');
   const edit = Boolean(id);
   const sourceDraft = params.get('draft');
@@ -263,11 +266,12 @@ export function Publish() {
       </Header>
       {edit && <div className="notice">{ended ? '招募已结束，可修正说明、联系方式和补充资料；岗位、名额和录取结果已锁定。' : '时间、地点和岗位变更会通知相关申请者。截止时间只允许延长；有申请记录的岗位可停止接收申请。'}</div>}
       <form
+        ref={formRef}
         onSubmit={async (e) => {
           e.preventDefault();
           setError('');
-          if (!ended && !form.roles.length) {
-            setError('请至少添加一个岗位');
+          if (!ended && !form.roles.length && !allowNoRoles.current) {
+            setConfirmNoRoles(true);
             return;
           }
           setBusy(true);
@@ -313,6 +317,7 @@ export function Publish() {
           } catch (e) {
             setError((e as Error).message);
             publishing.current = false;
+            allowNoRoles.current = false;
             if (!edit && revision > savedRevision.current)
               void persistDraft(form, revision).catch(() => {});
           } finally {
@@ -365,7 +370,7 @@ export function Publish() {
                 />
               </Field>
             </div>
-            <div className="panel">
+            <div className="panel" id="role-section">
               <h2>02 / 招募岗位</h2>
               {form.roles.map((r, i) => (
                 <div className="roleform" key={roleKeys[i]}>
@@ -681,6 +686,43 @@ export function Publish() {
           </div>
         </div>
       </form>
+      {confirmNoRoles && (
+        <Modal title={edit ? '确认保存' : '确认发布'} onClose={() => setConfirmNoRoles(false)}>
+          <p style={{ margin: '12px 0' }}>
+            {edit ? '本次保存后招募将不包含任何岗位，确认保存吗？' : '当前招募未设置岗位，确认发布吗？'}
+          </p>
+          <p className="small muted">
+            未设置岗位的招募无法接收申请（适合通知、问卷类内容），之后可在编辑中补充岗位。
+            {edit && ' 已有的申请记录会保留，不受影响。'}
+          </p>
+          <div className="actions" style={{ marginTop: 20 }}>
+            <button
+              type="button"
+              className="btn secondary"
+              onClick={() => {
+                setConfirmNoRoles(false);
+                document
+                  .getElementById('role-section')
+                  ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }}
+            >
+              前往设置岗位
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={busy || uploading}
+              onClick={() => {
+                allowNoRoles.current = true;
+                setConfirmNoRoles(false);
+                formRef.current?.requestSubmit();
+              }}
+            >
+              {edit ? '确定保存' : '确定发布'}
+            </button>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }

@@ -28,7 +28,7 @@ export function PostCard({ post }: { post: Post }) {
             .join(' · ')}
         </span>
         <span>
-          {accepted} / {total} 已录取
+          {total ? `${accepted} / ${total} 已录取` : '未设置岗位'}
         </span>
       </div>
       <div className="progress">

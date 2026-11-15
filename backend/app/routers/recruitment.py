@@ -307,7 +307,10 @@ def edit(post_id: int, data: PostEdit, user=Depends(student), db=Depends(get_db)
                     transition(db, application, "rejected", "岗位名额已满", user["id"])
         for role_id in set(existing) - set(ids):
             db.execute("DELETE FROM roles WHERE id=?", (role_id,))
-        if not db.execute("SELECT 1 FROM roles r WHERE r.post_id=? AND r.capacity>(SELECT count(*) FROM applications a WHERE a.role_id=r.id AND a.status='accepted')", (post_id,)).fetchone():
+        roles_left = db.execute(
+            "SELECT count(*) FROM roles WHERE post_id=?", (post_id,)
+        ).fetchone()[0]
+        if roles_left and not db.execute("SELECT 1 FROM roles r WHERE r.post_id=? AND r.capacity>(SELECT count(*) FROM applications a WHERE a.role_id=r.id AND a.status='accepted')", (post_id,)).fetchone():
             db.execute("UPDATE posts SET status='ended',end_reason='filled' WHERE id=?", (post_id,))
             notify(db, user["id"], "全部岗位已满，招募结束，结果已锁定。", post_id)
     event_time = data.event_time if data.event_time is not None else post["event_time"]
@@ -423,6 +426,10 @@ def apply(
         "SELECT banned FROM users WHERE id=?", (post["owner_id"],)
     ).fetchone()[0]:
         raise HTTPException(409, "招募当前不可申请")
+    if not db.execute(
+        "SELECT 1 FROM roles WHERE post_id=?", (post_id,)
+    ).fetchone():
+        raise HTTPException(409, "该招募未设置岗位，无法申请")
     role = db.execute(
         "SELECT * FROM roles WHERE id=? AND post_id=?", (data.role_id, post_id)
     ).fetchone()

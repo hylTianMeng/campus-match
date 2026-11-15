@@ -121,7 +121,7 @@ class PostEdit(Input):
     category: Optional[str] = Field(default=None, min_length=1, max_length=40)
     deadline: Optional[datetime] = None
     event_time: Optional[str] = Field(default=None, max_length=80)
-    roles: Optional[List[RoleEdit]] = Field(default=None, min_length=1, max_length=20)
+    roles: Optional[List[RoleEdit]] = Field(default=None, max_length=20)
     title: str = Field(min_length=1, max_length=160)
     description: str = Field(min_length=1, max_length=20000)
     place: str = Field(default="", max_length=200)
@@ -141,7 +141,7 @@ class PostCreate(PostEdit):
     category: str = Field(min_length=1, max_length=40)
     deadline: datetime
     event_time: str = Field(default="", max_length=80)
-    roles: List[Role] = Field(min_length=1, max_length=20)
+    roles: List[Role] = Field(max_length=20)
     draft_id: Optional[int] = None
 
     @field_validator("deadline")

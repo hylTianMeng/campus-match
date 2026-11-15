@@ -565,3 +565,43 @@ def test_banned_unverified_and_safe_links(client):
         },
     )
     assert response.status_code == 422
+
+
+def test_post_without_roles_can_be_published_edited_and_rejected(client):
+    login(client, "chen")
+    post = client.post(
+        "/api/posts",
+        json={
+            "title": "无岗位招募",
+            "category": "课程项目",
+            "description": "先收集意向，稍后补充岗位",
+            "deadline": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat(),
+            "roles": [],
+        },
+    )
+    assert post.status_code == 201, post.text
+    post_id = post.json()["id"]
+    assert post.json()["roles"] == []
+    assert post.json()["status"] == "open"
+    login(client, "shen")
+    apply = client.post(f"/api/posts/{post_id}/applications", json={"role_id": 1})
+    assert apply.status_code == 409
+    assert "未设置岗位" in apply.json()["detail"]
+    login(client, "chen")
+    edited = client.patch(
+        f"/api/posts/{post_id}",
+        json={"title": "无岗位招募", "description": "先收集意向", "roles": []},
+    )
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["status"] == "open"
+    added = client.patch(
+        f"/api/posts/{post_id}",
+        json={
+            "title": "无岗位招募",
+            "description": "先收集意向",
+            "roles": [{"name": "成员", "capacity": 1}],
+        },
+    )
+    assert added.status_code == 200, added.text
+    assert added.json()["roles"][0]["name"] == "成员"
+    assert added.json()["status"] == "open"

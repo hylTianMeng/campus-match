@@ -79,6 +79,46 @@ export function Detail() {
             <h2 style={{ margin: '28px 0 13px' }}>关于这次合作</h2>
             <div className="bodycopy">{post.description}</div>
           </div>
+          {post.roles.length > 0 && (
+            <div className="panel">
+              <h2>招募岗位</h2>
+              {post.roles.map((r) => (
+                <div className="role" key={r.id}>
+                  <div className="between">
+                    <h3>{r.name}</h3>
+                    <Badge>
+                      {r.accepting === false ? '已停止接收申请' : r.accepted >= r.capacity
+                        ? '岗位已满'
+                        : '剩余 ' + (r.capacity - r.accepted) + ' 名'}
+                    </Badge>
+                  </div>
+                  <p>{r.description}</p>
+                  <Tags values={r.tags} />
+                  <div className="progress">
+                    <span style={{ width: `${(r.accepted / r.capacity) * 100}%` }} />
+                  </div>
+                  <div className="between">
+                    <span className="small muted">
+                      已录取 {r.accepted} / {r.capacity} 人
+                    </span>
+                    {!own && (
+                      <button
+                        className="btn"
+                        disabled={ended || r.accepting === false || r.accepted >= r.capacity}
+                        onClick={() => {
+                          setRole(r);
+                          setJoin(true);
+                        }}
+                      >
+                        {ended ? '招募已结束' : '申请此岗位'}
+                      </button>
+                    )}
+                    {own && <span className="small muted">本人招募 · 可在右侧管理申请</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           {(Object.entries(post.extras).some(([key, value]) => key === 'items' ? post.extras.items?.length : Boolean(value)) || post.attachment) && (
             <div className="panel">
               <h2>更多信息</h2>
@@ -224,7 +264,9 @@ export function Detail() {
             setError('');
           }}
         >
-          {!role ? (
+          {post.roles.length === 0 ? (
+            <div className="notice">该招募未设置岗位（通知 / 问卷类内容），暂不接受申请，可通过私信与发布者沟通。</div>
+          ) : !role ? (
             <>
               <div className="notice">选择一个岗位提交申请；不同岗位可分别申请。</div>
               {post.roles.map((r) => (
