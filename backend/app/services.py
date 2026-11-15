@@ -94,7 +94,7 @@ def transition(db, app, status, reason, actor_id):
     notify(db, app["user_id"], reason, app["post_id"])
 
 
-def decide(db, app_id, user, action, reason):
+def decide(db, app_id, user, action, reason, allow_reapply=True):
     app = db.execute("SELECT * FROM applications WHERE id=?", (app_id,)).fetchone()
     if not app:
         raise HTTPException(404, "申请不存在")
@@ -113,7 +113,15 @@ def decide(db, app_id, user, action, reason):
             "主动撤回申请" if action == "withdraw" else "主动放弃录取",
             user["id"],
         )
-        notify(db, post["owner_id"], "有申请者撤回申请或放弃录取。", post["id"])
+        actor = db.execute("SELECT name FROM users WHERE id=?", (app["user_id"],)).fetchone()
+        role = db.execute("SELECT name FROM roles WHERE id=?", (app["role_id"],)).fetchone()
+        verb = "撤回了申请" if action == "withdraw" else "放弃了录取"
+        notify(
+            db,
+            post["owner_id"],
+            f"{actor['name']} {verb}（岗位：{role['name']}）。可在申请管理中处理。",
+            post["id"],
+        )
         return
     require_owner(post, user)
     expected = "accepted" if action == "revoke" else "pending"
@@ -122,13 +130,14 @@ def decide(db, app_id, user, action, reason):
     if action in ("reject", "revoke"):
         if not reason:
             raise HTTPException(422, "请填写原因")
-        transition(
-            db,
-            app,
-            "rejected",
-            ("撤销录取：" if action == "revoke" else "未通过：") + reason,
-            user["id"],
-        )
+        text = ("撤销录取：" if action == "revoke" else "未通过：") + reason
+        if action == "reject" and not allow_reapply:
+            text += "（发布者不允许再次申请）"
+            db.execute(
+                "INSERT OR IGNORE INTO application_bans(post_id,user_id,reason,created_at) VALUES(?,?,?,?)",
+                (post["id"], app["user_id"], reason, now()),
+            )
+        transition(db, app, "rejected", text, user["id"])
         return
     applicant = db.execute(
         "SELECT * FROM users WHERE id=?", (app["user_id"],)

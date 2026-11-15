@@ -23,16 +23,19 @@ interface Confirmation {
   method?: string;
   action?: string;
   reason?: boolean;
+  reapply?: boolean;
 }
 function useConfirmation(refresh: () => void) {
   const [dialog, setDialog] = useState<Confirmation>(),
     [reason, setReason] = useState(''),
+    [allowReapply, setAllowReapply] = useState(true),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const { toast } = useSession();
   const ask = (next: Confirmation) => {
     setReason('');
     setError('');
+    setAllowReapply(true);
     setDialog(next);
   };
   const modal = dialog && (
@@ -52,7 +55,13 @@ function useConfirmation(refresh: () => void) {
             await write(
               dialog.path,
               dialog.method ?? 'POST',
-              dialog.action ? { action: dialog.action, reason } : {},
+              dialog.action
+                ? {
+                    action: dialog.action,
+                    reason,
+                    ...(dialog.reapply ? { allow_reapply: allowReapply } : {}),
+                  }
+                : {},
             );
             setDialog(undefined);
             toast('操作已完成');
@@ -68,6 +77,16 @@ function useConfirmation(refresh: () => void) {
           <Field label="操作原因（必填）">
             <textarea required value={reason} onChange={(e) => setReason(e.target.value)} />
           </Field>
+        )}
+        {dialog.reapply && (
+          <label className="small" style={{ display: 'block', marginTop: 6 }}>
+            <input
+              type="checkbox"
+              checked={allowReapply}
+              onChange={(e) => setAllowReapply(e.target.checked)}
+            />{' '}
+            允许该用户再次申请
+          </label>
         )}
         <ErrorNote error={error} />
         <div className="actions">
@@ -217,15 +236,37 @@ export function Applications({ team = false }: { team?: boolean }) {
     owner = Boolean(id),
     data = useData<Application[]>(owner ? '/posts/' + id + '/applications' : '/me/applications');
   const { ask, modal } = useConfirmation(data.refresh),
+    [banError, setBanError] = useState(''),
     rows = data.data?.filter((a) => !team || a.status === 'accepted');
-  const decide = (a: Application, action: string, title: string, reason = false) =>
+  const { toast } = useSession();
+  const decide = (
+    a: Application,
+    action: string,
+    title: string,
+    reason = false,
+    reapply = false,
+  ) =>
     ask({
       title,
       description: `${a.applicant_name} · ${a.title} · ${a.role_name}。操作以服务器最新状态为准。`,
       path: '/applications/' + a.id + '/decision',
       action,
       reason,
+      reapply,
     });
+  const toggleBan = async (a: Application) => {
+    setBanError('');
+    try {
+      await write('/posts/' + a.post_id + '/application-ban', 'PUT', {
+        user_id: a.user_id,
+        banned: !a.reapply_banned,
+      });
+      toast(a.reapply_banned ? '已允许该用户再次申请' : '已禁止该用户再次申请');
+      data.refresh();
+    } catch (e) {
+      setBanError((e as Error).message);
+    }
+  };
   return (
     <>
       <Header
@@ -259,14 +300,32 @@ export function Applications({ team = false }: { team?: boolean }) {
             </div>
             <Badge color={a.status === 'accepted' ? 'green' : ''}>{statusLabel[a.status]}</Badge>
           </div>
-          {a.message && (
-            <p className="bodycopy" style={{ marginTop: 12 }}>
-              留言：{a.message}
-            </p>
+          <p className="bodycopy" style={{ marginTop: 12 }}>
+            留言：{a.message || '无'}
+          </p>
+          <p className="bodycopy">相关经历：{a.experience || '无'}</p>
+          {a.portfolio ? (
+            <SafeLink url={a.portfolio}>简历 / 作品</SafeLink>
+          ) : (
+            <p className="bodycopy">简历 / 作品：无</p>
           )}
-          {a.experience && <p className="bodycopy">相关经历：{a.experience}</p>}
-          <SafeLink url={a.portfolio}>简历 / 作品</SafeLink>
           {a.reason && <p className="small muted">{a.reason}</p>}
+          {owner && a.status === 'withdrawn' && (
+            <div className="actions" style={{ marginTop: 12 }}>
+              <button
+                className={a.reapply_banned ? 'btn' : 'btn secondary'}
+                onClick={() => toggleBan(a)}
+              >
+                {a.reapply_banned ? '允许再次申请' : '禁止再次申请'}
+              </button>
+              <span className="small muted">
+                {a.reapply_banned
+                  ? '该用户目前不能申请此招募'
+                  : '该用户目前可以再次申请此招募'}
+              </span>
+            </div>
+          )}
+          <ErrorNote error={banError} />
           <details style={{ marginTop: 12 }}>
             <summary>查看操作历史</summary>
             <div className="timeline">
@@ -288,7 +347,7 @@ export function Applications({ team = false }: { team?: boolean }) {
                       </button>
                       <button
                         className="btn secondary"
-                        onClick={() => decide(a, 'reject', '拒绝申请', true)}
+                        onClick={() => decide(a, 'reject', '拒绝申请', true, true)}
                       >
                         拒绝
                       </button>

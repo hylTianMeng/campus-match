@@ -605,3 +605,119 @@ def test_post_without_roles_can_be_published_edited_and_rejected(client):
     assert added.status_code == 200, added.text
     assert added.json()["roles"][0]["name"] == "成员"
     assert added.json()["status"] == "open"
+
+
+def test_reject_can_ban_reapply(client):
+    login(client, "chen")
+    post = new_post(client, (2,))
+    role_id = post["roles"][0]["id"]
+    login(client, "shen")
+    app_id = apply(client, post)
+    login(client, "chen")
+    banned = client.post(
+        f"/api/applications/{app_id}/decision",
+        json={"action": "reject", "reason": "不合适", "allow_reapply": False},
+    )
+    assert banned.status_code == 200, banned.text
+    login(client, "shen")
+    blocked = client.post(
+        f"/api/posts/{post['id']}/applications", json={"role_id": role_id}
+    )
+    assert blocked.status_code == 403
+    assert "不允许" in blocked.json()["detail"]
+    login(client, "chen")
+    other = new_post(client, (1,))
+    login(client, "shen")
+    other_app = apply(client, other)
+    login(client, "chen")
+    assert decision(client, other_app, "reject").status_code == 200
+    login(client, "shen")
+    assert client.post(
+        f"/api/posts/{other['id']}/applications",
+        json={"role_id": other["roles"][0]["id"], "message": "再次尝试"},
+    ).status_code == 201
+
+
+def test_withdraw_ban_toggle_flow(client):
+    login(client, "chen")
+    post = new_post(client, (2,))
+    login(client, "shen")
+    app_id = apply(client, post)
+    assert decision(client, app_id, "withdraw").status_code == 200
+    login(client, "chen")
+    apps = client.get(f"/api/posts/{post['id']}/applications").json()
+    target = next(a for a in apps if a["id"] == app_id)
+    assert target["status"] == "withdrawn"
+    assert target["reapply_banned"] is False
+    notices = client.get("/api/notices").json()
+    assert any("撤回了申请" in n["body"] and target["applicant_name"] in n["body"] for n in notices)
+    assert client.put(
+        f"/api/posts/{post['id']}/application-ban",
+        json={"user_id": target["user_id"], "banned": True},
+    ).status_code == 200
+    login(client, "shen")
+    assert client.post(
+        f"/api/posts/{post['id']}/applications",
+        json={"role_id": post["roles"][0]["id"]},
+    ).status_code == 403
+    assert client.put(
+        f"/api/posts/{post['id']}/application-ban",
+        json={"user_id": target["user_id"], "banned": False},
+    ).status_code == 403
+    login(client, "chen")
+    assert client.put(
+        f"/api/posts/{post['id']}/application-ban",
+        json={"user_id": target["user_id"], "banned": False},
+    ).status_code == 200
+    login(client, "shen")
+    assert client.post(
+        f"/api/posts/{post['id']}/applications",
+        json={"role_id": post["roles"][0]["id"]},
+    ).status_code == 201
+
+
+def test_expired_post_reopens_by_extending_deadline(client):
+    login(client, "chen")
+    post = new_post(client, (2,))
+    login(client, "shen")
+    app_id = apply(client, post)
+    with connect() as db:
+        db.execute(
+            "UPDATE posts SET deadline=? WHERE id=?",
+            (
+                (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
+                post["id"],
+            ),
+        )
+    assert client.get(f"/api/posts/{post['id']}").json()["end_reason"] == "expired"
+    login(client, "chen")
+    future = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+    ended = new_post(client, (1,))
+    assert client.post(f"/api/posts/{ended['id']}/end", json={}).status_code == 200
+    assert client.patch(
+        f"/api/posts/{ended['id']}",
+        json={"title": ended["title"], "description": ended["description"], "deadline": future},
+    ).status_code == 409
+    past = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    assert client.patch(
+        f"/api/posts/{post['id']}",
+        json={"title": post["title"], "description": post["description"], "deadline": past},
+    ).status_code == 409
+    reopened = client.patch(
+        f"/api/posts/{post['id']}",
+        json={"title": post["title"], "description": post["description"], "deadline": future},
+    )
+    assert reopened.status_code == 200, reopened.text
+    assert reopened.json()["status"] == "open"
+    assert reopened.json()["end_reason"] is None
+    login(client, "shen")
+    mine = next(
+        a for a in client.get("/api/me/applications").json() if a["id"] == app_id
+    )
+    assert mine["status"] == "expired"
+    notices = client.get("/api/notices").json()
+    assert any("重新开放" in n["body"] for n in notices)
+    assert client.post(
+        f"/api/posts/{post['id']}/applications",
+        json={"role_id": post["roles"][0]["id"]},
+    ).status_code == 201

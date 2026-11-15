@@ -170,6 +170,12 @@ class ApplicationCreate(Input):
 class Decision(Input):
     action: str = Field(pattern="^(accept|reject|revoke|withdraw|give-up)$")
     reason: str = Field(default="", max_length=1000)
+    allow_reapply: bool = True
+
+
+class ApplicationBan(Input):
+    user_id: int
+    banned: bool
 
 
 class Draft(Input):

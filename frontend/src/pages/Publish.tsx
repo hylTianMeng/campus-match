@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, useData, write } from '../api';
 import { useSession } from '../context';
 import type { Draft, Post, PostInput, RoleInput, InformationItem } from '../types';
-import { Header, Field, ErrorNote, LoadState, Modal, tagsFrom } from '../components/ui';
+import { Header, Field, ErrorNote, LoadState, Modal, tagsFrom, date } from '../components/ui';
 const blankRole = (): RoleInput => ({ name: '', capacity: 1, description: '', tags: [] });
 const blankPost = (): PostInput => ({
   title: '',
@@ -29,6 +29,7 @@ export function Publish() {
     { toast } = useSession();
   const [form, setForm] = useState<PostInput>(blankPost),
     [ended, setEnded] = useState(false),
+    [endReason, setEndReason] = useState(''),
     [attachmentNames, setAttachmentNames] = useState<Record<number, string>>({}),
     [revision, setRevision] = useState(0),
     [saveStatus, setSaveStatus] = useState<'idle' | 'pending' | 'saving' | 'saved' | 'error'>(
@@ -43,9 +44,11 @@ export function Publish() {
     [error, setError] = useState(''),
     [loading, setLoading] = useState(true),
     [loadError, setLoadError] = useState(''),
-    [confirmNoRoles, setConfirmNoRoles] = useState(false);
+    [confirmNoRoles, setConfirmNoRoles] = useState(false),
+    [confirmTimeMismatch, setConfirmTimeMismatch] = useState(false);
   const formRef = useRef<HTMLFormElement>(null),
-    allowNoRoles = useRef(false);
+    allowNoRoles = useRef(false),
+    allowTimeMismatch = useRef(false);
   const categories = useData<string[]>('/categories');
   const edit = Boolean(id);
   const sourceDraft = params.get('draft');
@@ -85,6 +88,7 @@ export function Publish() {
             (p.attachments ?? (p.attachment ? [p.attachment] : [])).map((a) => [a.id, a.filename]),
           ));
           if (active) setEnded(p.status === 'ended');
+          if (active) setEndReason(p.end_reason ?? '');
           originalDeadline.current = p.deadline;
           originalEventTime.current = p.event_time;
           if (active)
@@ -264,7 +268,15 @@ export function Publish() {
           </Link>
         )}
       </Header>
-      {edit && <div className="notice">{ended ? '招募已结束，可修正说明、联系方式和补充资料；岗位、名额和录取结果已锁定。' : '时间、地点和岗位变更会通知相关申请者。截止时间只允许延长；有申请记录的岗位可停止接收申请。'}</div>}
+      {edit && (
+        <div className="notice">
+          {ended
+            ? endReason === 'expired'
+              ? '招募已因截止到期结束：延长截止时间并保存，即可重新开放招募；其他信息仍处于锁定状态。'
+              : '招募已结束，可修正说明、联系方式和补充资料；岗位、名额和录取结果已锁定。'
+            : '时间、地点和岗位变更会通知相关申请者。截止时间只允许延长；有申请记录的岗位可停止接收申请。'}
+        </div>
+      )}
       <form
         ref={formRef}
         onSubmit={async (e) => {
@@ -272,6 +284,17 @@ export function Publish() {
           setError('');
           if (!ended && !form.roles.length && !allowNoRoles.current) {
             setConfirmNoRoles(true);
+            return;
+          }
+          const scheduleEditable = !ended || endReason === 'expired';
+          if (
+            scheduleEditable &&
+            form.event_time &&
+            form.deadline &&
+            new Date(form.deadline).getTime() <= new Date(form.event_time).getTime() &&
+            !allowTimeMismatch.current
+          ) {
+            setConfirmTimeMismatch(true);
             return;
           }
           setBusy(true);
@@ -289,12 +312,24 @@ export function Publish() {
               ...rest
             } = form;
             const body = edit
-              ? { title, description, place, tags, extras, attachment_id, ...(!ended ? {
-                  category: form.category,
-                  event_time: form.event_time === localDate(originalEventTime.current) ? originalEventTime.current : (form.event_time ? new Date(form.event_time).toISOString() : ''),
-                  deadline: form.deadline === localDate(originalDeadline.current) ? originalDeadline.current : new Date(form.deadline).toISOString(),
-                  roles: form.roles.map(({ id, name, capacity, description, tags, accepting }) => ({ id, name, capacity, description, tags, accepting: accepting ?? true })),
-                } : {}) }
+              ? {
+                  title,
+                  description,
+                  place,
+                  tags,
+                  extras,
+                  attachment_id,
+                  ...(!ended
+                    ? {
+                        category: form.category,
+                        event_time: form.event_time === localDate(originalEventTime.current) ? originalEventTime.current : (form.event_time ? new Date(form.event_time).toISOString() : ''),
+                        deadline: form.deadline === localDate(originalDeadline.current) ? originalDeadline.current : new Date(form.deadline).toISOString(),
+                        roles: form.roles.map(({ id, name, capacity, description, tags, accepting }) => ({ id, name, capacity, description, tags, accepting: accepting ?? true })),
+                      }
+                    : endReason === 'expired' && form.deadline !== localDate(originalDeadline.current)
+                      ? { deadline: new Date(form.deadline).toISOString() }
+                      : {}),
+                }
               : {
                   ...rest,
                   title,
@@ -318,6 +353,7 @@ export function Publish() {
             setError((e as Error).message);
             publishing.current = false;
             allowNoRoles.current = false;
+            allowTimeMismatch.current = false;
             if (!edit && revision > savedRevision.current)
               void persistDraft(form, revision).catch(() => {});
           } finally {
@@ -462,7 +498,7 @@ export function Publish() {
                 <Field label="招募截止时间 *">
                   <input
                     required
-                    disabled={ended}
+                    disabled={ended && endReason !== 'expired'}
                     type="datetime-local"
                     value={form.deadline}
                     onChange={(e) => set('deadline', e.target.value)}
@@ -719,6 +755,37 @@ export function Publish() {
               }}
             >
               {edit ? '确定保存' : '确定发布'}
+            </button>
+          </div>
+        </Modal>
+      )}
+      {confirmTimeMismatch && (
+        <Modal title="请再次确认" onClose={() => setConfirmTimeMismatch(false)}>
+          <p style={{ margin: '12px 0' }}>
+            出现截止时间早于活动开始时间的不合理情况，请再次确认。
+          </p>
+          <p className="small muted">
+            招募截止时间：{date(form.deadline)}，早于活动开始时间：{date(form.event_time)}。确认后仍会按当前填写保存。
+          </p>
+          <div className="actions" style={{ marginTop: 20 }}>
+            <button
+              type="button"
+              className="btn secondary"
+              onClick={() => setConfirmTimeMismatch(false)}
+            >
+              返回修改
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={busy || uploading}
+              onClick={() => {
+                allowTimeMismatch.current = true;
+                setConfirmTimeMismatch(false);
+                formRef.current?.requestSubmit();
+              }}
+            >
+              确认
             </button>
           </div>
         </Modal>
