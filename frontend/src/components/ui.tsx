@@ -32,7 +32,7 @@ export function Header({
       <div>
         <div className="eyebrow">TSINGMATE / TSINGHUA CAMPUS</div>
         <h1>{title}</h1>
-        <p>{sub}</p>
+        {sub && <p>{sub}</p>}
       </div>
       <div className="actions">{children}</div>
     </div>
@@ -77,9 +77,8 @@ export function Empty({
 }) {
   return (
     <div className="empty plain">
-      <div className="symbol">○</div>
       <h2>{title}</h2>
-      <div className="actions">{children}</div>
+      {children && <div className="actions">{children}</div>}
     </div>
   );
 }

@@ -22,7 +22,7 @@ import { Publish } from './pages/Publish';
 import { Posts, Drafts, Applications, Favorites } from './pages/Manage';
 import { People, PersonPage } from './pages/People';
 import { Profile } from './pages/Profile';
-import { Chats, Notices } from './pages/Messages';
+import { Chats } from './pages/Messages';
 export default function App() {
   return (
     <SessionProvider>
@@ -155,7 +155,7 @@ export default function App() {
               path="notices"
               element={
                 <Guard>
-                  <Notices />
+                  <Navigate to="/chats?view=notices" replace />
                 </Guard>
               }
             />

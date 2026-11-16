@@ -1,6 +1,15 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from 'react';
 import { api, ApiError, write } from './api';
-import type { User } from './types';
+import type { Person, User } from './types';
 
 /** localStorage 键：登录/退出/切换账号时写入版本号，用于跨标签页同步登录态。 */
 const SESSION_VERSION_KEY = 'campus_session_version';
@@ -12,11 +21,14 @@ interface Session {
   setUser: (user: User | null) => void;
   toast: (text: string, duration?: number) => void;
   logout: () => Promise<void>;
+  openedPeers: Person[];
+  setOpenedPeers: Dispatch<SetStateAction<Person[]>>;
 }
 const Context = createContext<Session>(null!);
 export const useSession = () => useContext(Context);
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [user, updateUser] = useState<User | null>(null);
+  const [openedPeers, setOpenedPeers] = useState<Person[]>([]);
   const [loading, setLoading] = useState(true);
   const [sessionError, setSessionError] = useState('');
   const [message, setMessage] = useState('');
@@ -45,6 +57,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setSessionError('');
     const nextId = value?.id ?? null;
     if (userIdRef.current !== nextId) {
+      setOpenedPeers([]);
       try {
         // storage 事件只在“其他标签页”触发，当前标签页不会收到，正好实现跨标签页同步。
         localStorage.setItem(SESSION_VERSION_KEY, String(Date.now()));
@@ -90,14 +103,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }
   return (
-    <Context.Provider value={{ user, loading, sessionError, setUser, toast, logout }}>
+    <Context.Provider
+      value={{ user, loading, sessionError, setUser, toast, logout, openedPeers, setOpenedPeers }}
+    >
       {children}
       {message && (
-        <div
-          id="toast"
-          style={{ display: 'block', opacity: leaving ? 0 : 1 }}
-          role="status"
-        >
+        <div id="toast" style={{ display: 'block', opacity: leaving ? 0 : 1 }} role="status">
           {message}
         </div>
       )}

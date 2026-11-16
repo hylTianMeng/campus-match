@@ -7,10 +7,12 @@ import { useSession } from '../context';
 import { Header, Tags, LoadState, Empty, Badge, Avatar } from '../components/ui';
 import { PostCard } from '../components/PostCard';
 export function People() {
+  const { user } = useSession();
   const [name, setName] = useState(''),
     [tag, setTag] = useState(''),
     [query, setQuery] = useState(''),
     data = useData<Person[]>('/people?' + query);
+  const classmates = data.data?.filter((person) => person.id !== user?.id);
   return (
     <>
       <Header title="找到同频的同学" sub="用技能和兴趣建立连接。仅展示允许被搜索的认证用户。" />
@@ -49,9 +51,9 @@ export function People() {
         </form>
       </div>
       <LoadState {...data} retry={data.refresh} />
-      {data.data?.length === 0 && <Empty title="没有符合条件的同学" />}
+      {classmates?.length === 0 && <Empty title="没有符合条件的同学" />}
       <div className="grid">
-        {data.data?.map((p) => (
+        {classmates?.map((p) => (
           <article className="card" key={p.id}>
             <div className="actions">
               <Avatar name={p.name} url={p.avatar_url} className="lg" />
@@ -112,7 +114,15 @@ export function PersonPage() {
             </Link>
           )}
         </div>
-        <div className="actions">{user?.id !== p.id && <><ReportButton type="user" targetId={p.id}/><BlockButton personId={p.id}/></>}</div><p style={{ margin: '20px 0' }}>{p.bio}</p>
+        <div className="actions">
+          {user?.id !== p.id && (
+            <>
+              <ReportButton type="user" targetId={p.id} />
+              <BlockButton personId={p.id} />
+            </>
+          )}
+        </div>
+        <p style={{ margin: '20px 0' }}>{p.bio}</p>
         <Tags values={p.tags} />
       </div>
       <div className="person-grid">

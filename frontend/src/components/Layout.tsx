@@ -136,11 +136,3 @@ export function PersonalLayout() {
     </div>
   );
 }
-export function MessageTabs() {
-  return (
-    <div className="tabs">
-      <NavLink to="/chats">私信</NavLink>
-      <NavLink to="/notices">系统通知</NavLink>
-    </div>
-  );
-}
