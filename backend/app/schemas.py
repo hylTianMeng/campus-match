@@ -45,6 +45,10 @@ class UnbanUser(Input):
     reason: str = Field(default="", max_length=1000)
 
 
+class TakedownPost(Input):
+    reason: str = Field(min_length=1, max_length=1000)
+
+
 class Profile(Input):
     name: str = Field(min_length=1, max_length=40)
     dept: str = Field(default="", max_length=80)

@@ -97,3 +97,12 @@ CREATE TABLE IF NOT EXISTS admin_actions(
  reason TEXT NOT NULL DEFAULT '',
  created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS admin_post_actions(
+ id INTEGER PRIMARY KEY,
+ admin_id INTEGER NOT NULL REFERENCES users(id),
+ post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+ action TEXT NOT NULL CHECK(action IN ('takedown','restore')),
+ reason TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL
+);

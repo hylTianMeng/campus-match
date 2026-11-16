@@ -258,15 +258,6 @@ export function Publish() {
           errs[`role-${i}-capacity`] = '招募人数需为不小于 1 的整数';
       });
     if (deadlineEditable && !form.deadline) errs.deadline = '请填写招募截止时间';
-    if (
-      baseEditable &&
-      form.event_time &&
-      form.deadline &&
-      new Date(form.event_time).getTime() < new Date(form.deadline).getTime()
-    ) {
-      errs.event_time = '活动开始时间早于招募截止时间，请调整';
-      errs.deadline = '招募截止时间晚于活动开始时间，请调整';
-    }
     (form.extras.items ?? []).forEach((item, i) => {
       if (!item.title.trim()) errs[`item-${i}-title`] = '请填写信息标题';
       if (item.type === 'text' && !item.content.trim())
@@ -278,6 +269,12 @@ export function Publish() {
     });
     return errs;
   }
+  // 时间合理性是提醒而非拦截：活动开始时间早于截止时间时给出警示，仍允许提交。
+  const scheduleEditable = !edit || !ended || endReason === 'expired';
+  const timeConflict =
+    scheduleEditable &&
+    Boolean(form.event_time && form.deadline) &&
+    new Date(form.event_time).getTime() < new Date(form.deadline).getTime();
   function scrollToFirstError(errs: Record<string, string>) {
     const order = ['title', 'category', 'description'];
     form.roles.forEach((_, i) => order.push(`role-${i}-name`, `role-${i}-capacity`));
@@ -286,10 +283,22 @@ export function Publish() {
       order.push(`item-${i}-title`, `item-${i}-content`),
     );
     const first = order.find((key) => errs[key]);
-    if (first)
-      document
-        .getElementById('pf-' + first)
-        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (!first) return;
+    // 滚动精确到出错字段本身：定位其标签（“招募说明”等）恰好露出；
+    // 若错误区域没有具体字段（如尚未添加任何岗位），定位到所在小节标题。
+    const fieldId = `pf-${first}`;
+    const target = document.getElementById(fieldId)
+      ? fieldId
+      : first.startsWith('role-')
+        ? 'role-section'
+        : first.startsWith('item-')
+          ? 'pf-sec-extras'
+          : first === 'deadline' || first === 'event_time'
+            ? 'pf-sec-time'
+            : 'pf-sec-basic';
+    document
+      .getElementById(target)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
   useEffect(() => {
     setErrors((prev) => {
@@ -303,11 +312,10 @@ export function Publish() {
   }, [form]);
   const markErr = (key: string) =>
     errors[key] ? { borderColor: 'var(--red)' } : undefined;
+  // 错误提示直接内嵌在 Field 内部（.field small 自带 6px 上边距），避免外层包装产生多余换行。
   const fieldErr = (key: string) =>
     errors[key] ? (
-      <p className="small" style={{ color: 'var(--red)', margin: '6px 0 0' }}>
-        {errors[key]}
-      </p>
+      <small style={{ color: 'var(--red)', display: 'block' }}>{errors[key]}</small>
     ) : null;
   if (loading) return <LoadState loading />;
   if (loadError) return <ErrorNote error={loadError} />;
@@ -424,38 +432,34 @@ export function Publish() {
       >
         <div className="columns">
           <section>
-            <div className="panel">
+            <div className="panel" id="pf-sec-basic">
               <h2>01 / 基本信息</h2>
-              <div id="pf-title">
-                <Field label="招募标题 *">
-                  <input
-                    required
-                    disabled={ended}
-                    maxLength={160}
-                    style={markErr('title')}
-                    value={form.title}
-                    onChange={(e) => set('title', e.target.value)}
-                  />
-                </Field>
+              <Field label="招募标题 *" id="pf-title">
+                <input
+                  required
+                  disabled={ended}
+                  maxLength={160}
+                  style={markErr('title')}
+                  value={form.title}
+                  onChange={(e) => set('title', e.target.value)}
+                />
                 {fieldErr('title')}
-              </div>
-              <div id="pf-category">
-                <Field label="一级分类 *">
-                  <select
-                    required
-                    disabled={ended}
-                    style={markErr('category')}
-                    value={form.category}
-                    onChange={(e) => set('category', e.target.value)}
-                  >
-                    <option value="">请选择分类</option>
-                    {categories.data?.map((c) => (
-                      <option key={c}>{c}</option>
-                    ))}
-                  </select>
-                </Field>
+              </Field>
+              <Field label="一级分类 *" id="pf-category">
+                <select
+                  required
+                  disabled={ended}
+                  style={markErr('category')}
+                  value={form.category}
+                  onChange={(e) => set('category', e.target.value)}
+                >
+                  <option value="">请选择分类</option>
+                  {categories.data?.map((c) => (
+                    <option key={c}>{c}</option>
+                  ))}
+                </select>
                 {fieldErr('category')}
-              </div>
+              </Field>
               <ErrorNote error={categories.error} />
               <Field label="招募者联系方式（选填）">
                 <input
@@ -464,20 +468,18 @@ export function Publish() {
                 />
               </Field>
               <p className="small muted">填写后会在公开招募详情中展示，访客也可查看。</p>
-              <div id="pf-description">
-                <Field label="招募说明 *">
-                  <textarea
-                    required
-                    rows={6}
-                    maxLength={20000}
-                    style={markErr('description')}
-                    value={form.description}
-                    onChange={(e) => set('description', e.target.value)}
-                    placeholder="介绍目标、协作方式与投入期待"
-                  />
-                </Field>
+              <Field label="招募说明 *" id="pf-description">
+                <textarea
+                  required
+                  rows={6}
+                  maxLength={20000}
+                  style={markErr('description')}
+                  value={form.description}
+                  onChange={(e) => set('description', e.target.value)}
+                  placeholder="介绍目标、协作方式与投入期待"
+                />
                 {fieldErr('description')}
-              </div>
+              </Field>
             </div>
             <div className="panel" id="role-section">
               <h2>02 / 招募岗位</h2>
@@ -503,33 +505,29 @@ export function Publish() {
                     )}
                   </div>
                   <div className="formgrid" style={{ marginTop: 15 }}>
-                    <div id={`pf-role-${i}-name`}>
-                      <Field label="岗位名称 *">
-                        <input
-                          required
-                          disabled={ended}
-                          style={markErr(`role-${i}-name`)}
-                          value={r.name}
-                          onChange={(e) => setRole(i, { name: e.target.value })}
-                        />
-                      </Field>
+                    <Field label="岗位名称 *" id={`pf-role-${i}-name`}>
+                      <input
+                        required
+                        disabled={ended}
+                        style={markErr(`role-${i}-name`)}
+                        value={r.name}
+                        onChange={(e) => setRole(i, { name: e.target.value })}
+                      />
                       {fieldErr(`role-${i}-name`)}
-                    </div>
-                    <div id={`pf-role-${i}-capacity`}>
-                      <Field label="招募人数 *">
-                        <input
-                          required
-                          disabled={ended}
-                          type="number"
-                          min={Math.max(1, r.accepted ?? 0)}
-                          max={100}
-                          style={markErr(`role-${i}-capacity`)}
-                          value={r.capacity}
-                          onChange={(e) => setRole(i, { capacity: Number(e.target.value) })}
-                        />
-                      </Field>
+                    </Field>
+                    <Field label="招募人数 *" id={`pf-role-${i}-capacity`}>
+                      <input
+                        required
+                        disabled={ended}
+                        type="number"
+                        min={Math.max(1, r.accepted ?? 0)}
+                        max={100}
+                        style={markErr(`role-${i}-capacity`)}
+                        value={r.capacity}
+                        onChange={(e) => setRole(i, { capacity: Number(e.target.value) })}
+                      />
                       {fieldErr(`role-${i}-capacity`)}
-                    </div>
+                    </Field>
                     <Field label="技能标签">
                       <input
                         disabled={ended}
@@ -573,34 +571,30 @@ export function Publish() {
                 </div>
               )}
             </div>
-            <div className="panel">
+            <div className="panel" id="pf-sec-time">
               <h2>03 / 时间、地点与标签</h2>
               <div className="formgrid">
-                <div id="pf-deadline">
-                  <Field label="招募截止时间 *">
-                    <input
-                      required
-                      disabled={ended && endReason !== 'expired'}
-                      type="datetime-local"
-                      style={markErr('deadline')}
-                      value={form.deadline}
-                      onChange={(e) => set('deadline', e.target.value)}
-                    />
-                  </Field>
+                <Field label="招募截止时间 *" id="pf-deadline">
+                  <input
+                    required
+                    disabled={ended && endReason !== 'expired'}
+                    type="datetime-local"
+                    style={markErr('deadline')}
+                    value={form.deadline}
+                    onChange={(e) => set('deadline', e.target.value)}
+                  />
                   {fieldErr('deadline')}
-                </div>
-                <div id="pf-event_time">
-                  <Field label="活动时间（选填）">
-                    <input
-                      disabled={ended}
-                      type="datetime-local"
-                      style={markErr('event_time')}
-                      value={form.event_time}
-                      onChange={(e) => set('event_time', e.target.value)}
-                    />
-                  </Field>
+                </Field>
+                <Field label="活动时间（选填）" id="pf-event_time">
+                  <input
+                    disabled={ended}
+                    type="datetime-local"
+                    style={markErr('event_time')}
+                    value={form.event_time}
+                    onChange={(e) => set('event_time', e.target.value)}
+                  />
                   {fieldErr('event_time')}
-                </div>
+                </Field>
                 <Field label="活动地点（选填）">
                   <input disabled={ended} value={form.place} onChange={(e) => set('place', e.target.value)} />
                 </Field>
@@ -616,6 +610,11 @@ export function Publish() {
                   />
                 </Field>
               </div>
+              {timeConflict && (
+                <div className="notice warn" role="alert">
+                  出现活动开始时间早于招募截止时间的不合理情况，请再次确认。
+                </div>
+              )}
               <p className="small muted">小标签用逗号分隔，可自由添加；它们会显示在招募卡片上，也可用于搜索。</p>
               {!!form.tags.length && (
                 <div className="tags" aria-label="已添加的招募小标签">
@@ -638,7 +637,7 @@ export function Publish() {
                 </div>
               )}
             </div>
-            <div className="panel">
+            <div className="panel" id="pf-sec-extras">
               <h2>04 / 补充信息（选填）</h2>
               <p className="small muted">自行填写信息标题，并选择文字信息、网址链接或附件内容。填写后将在招募详情中公开展示。</p>
               {(form.extras.items ?? []).map((item, index) => (
@@ -649,18 +648,16 @@ export function Publish() {
                       ...form.extras, items: form.extras.items!.filter((_, i) => i !== index),
                     })}>移除信息</button>
                   </div>
-                  <div id={`pf-item-${index}-title`}>
-                    <Field label="信息标题 *">
-                      <input
-                        required
-                        maxLength={100}
-                        style={markErr(`item-${index}-title`)}
-                        value={item.title}
-                        onChange={(e) => setItem(index, { title: e.target.value })}
-                      />
-                    </Field>
+                  <Field label="信息标题 *" id={`pf-item-${index}-title`}>
+                    <input
+                      required
+                      maxLength={100}
+                      style={markErr(`item-${index}-title`)}
+                      value={item.title}
+                      onChange={(e) => setItem(index, { title: e.target.value })}
+                    />
                     {fieldErr(`item-${index}-title`)}
-                  </div>
+                  </Field>
                   <Field label="信息属性 *">
                     <select value={item.type} disabled={uploading || busy} onChange={(e) => setItem(index, {
                       type: e.target.value as InformationItem['type'], content: '', attachment_id: null,
@@ -670,23 +667,21 @@ export function Publish() {
                       <option value="attachment">附件内容</option>
                     </select>
                   </Field>
-                  <div id={`pf-item-${index}-content`}>
-                    {item.type === 'text' ? (
-                      <Field label="文字内容 *"><textarea required maxLength={5000} style={markErr(`item-${index}-content`)} value={item.content} onChange={(e) => setItem(index, { content: e.target.value })} /></Field>
-                    ) : item.type === 'link' ? (
-                      <Field label="网址 *"><input required type="url" placeholder="https://" maxLength={5000} style={markErr(`item-${index}-content`)} value={item.content} onChange={(e) => setItem(index, { content: e.target.value })} /></Field>
-                    ) : (
-                      <Field label="附件内容 *">
-                        <input type="file" required={!item.attachment_id} accept=".pdf,.docx,.png,.jpg,.jpeg,.txt" style={markErr(`item-${index}-content`)} disabled={uploading || busy} onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) void uploadFile(file, index);
-                          e.target.value = '';
-                        }} />
-                        {item.attachment_id && <p className="small">已上传：{attachmentNames[item.attachment_id] || `附件 #${item.attachment_id}`}</p>}
-                      </Field>
-                    )}
-                    {fieldErr(`item-${index}-content`)}
-                  </div>
+                  {item.type === 'text' ? (
+                    <Field label="文字内容 *" id={`pf-item-${index}-content`}><textarea required maxLength={5000} style={markErr(`item-${index}-content`)} value={item.content} onChange={(e) => setItem(index, { content: e.target.value })} />{fieldErr(`item-${index}-content`)}</Field>
+                  ) : item.type === 'link' ? (
+                    <Field label="网址 *" id={`pf-item-${index}-content`}><input required type="url" placeholder="https://" maxLength={5000} style={markErr(`item-${index}-content`)} value={item.content} onChange={(e) => setItem(index, { content: e.target.value })} />{fieldErr(`item-${index}-content`)}</Field>
+                  ) : (
+                    <Field label="附件内容 *" id={`pf-item-${index}-content`}>
+                      <input type="file" required={!item.attachment_id} accept=".pdf,.docx,.png,.jpg,.jpeg,.txt" style={markErr(`item-${index}-content`)} disabled={uploading || busy} onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) void uploadFile(file, index);
+                        e.target.value = '';
+                      }} />
+                      {item.attachment_id && <p className="small">已上传：{attachmentNames[item.attachment_id] || `附件 #${item.attachment_id}`}</p>}
+                      {fieldErr(`item-${index}-content`)}
+                    </Field>
+                  )}
                 </div>
               ))}
               <button type="button" className="btn secondary" disabled={uploading || busy || (form.extras.items?.length ?? 0) >= 20} onClick={() => set('extras', {

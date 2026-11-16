@@ -748,3 +748,80 @@ def test_force_delete_post_with_application_history(client):
     login(client, "shen")
     notices = client.get("/api/notices").json()
     assert any("已删除该招募" in n["body"] for n in notices)
+
+
+def test_admin_can_takedown_and_restore_post(client):
+    login(client, "chen")
+    post = new_post(client, (2,))
+    login(client, "shen")
+    app_id = apply(client, post)
+    # 普通管理员（lin）下架，需填写理由
+    login(client, "lin")
+    assert (
+        client.post(f"/api/admin/posts/{post['id']}/takedown", json={}).status_code == 422
+    )
+    assert (
+        client.post(
+            f"/api/admin/posts/{post['id']}/takedown",
+            json={"reason": "内容不符合社区规范"},
+        ).status_code == 200
+    )
+    # 发布者收到带招募名与理由的通知；申请者收到下架不可见效果
+    login(client, "chen")
+    notices = client.get("/api/notices").json()
+    assert any(
+        f"您的「{post['title']}」招募已被下架" in n["body"]
+        and "内容不符合社区规范" in n["body"]
+        for n in notices
+    )
+    # 大厅列表不再展示该招募（普通用户）
+    login(client, "shen")
+    ids = [p["id"] for p in client.get("/api/posts").json()]
+    assert post["id"] not in ids
+    # 管理员大厅列表仍可见已下架招募（带已下架标记），以便撤回下架
+    login(client, "lin")
+    admin_list = {p["id"]: p for p in client.get("/api/posts").json()}
+    assert admin_list[post["id"]]["end_reason"] == "taken_down"
+    # 普通用户访问详情 404；发布者与管理员仍可见
+    login(client, "shen")
+    assert client.get(f"/api/posts/{post['id']}").status_code == 404
+    login(client, "chen")
+    assert client.get(f"/api/posts/{post['id']}").json()["end_reason"] == "taken_down"
+    login(client, "lin")
+    assert client.get(f"/api/posts/{post['id']}").status_code == 200
+    # 未下架的招募不能恢复；已下架的不能重复下架
+    other = new_post(client, (1,))
+    assert client.post(f"/api/admin/posts/{other['id']}/restore", json={}).status_code == 409
+    assert (
+        client.post(
+            f"/api/admin/posts/{post['id']}/takedown", json={"reason": "重复下架"}
+        ).status_code == 409
+    )
+    # 恢复上架后重新可见，发布者收到通知，申请记录保留
+    assert client.post(f"/api/admin/posts/{post['id']}/restore", json={}).status_code == 200
+    login(client, "chen")
+    notices = client.get("/api/notices").json()
+    assert any(f"您的「{post['title']}」招募已恢复上架" in n["body"] for n in notices)
+    login(client, "shen")
+    assert client.get(f"/api/posts/{post['id']}").status_code == 200
+    mine = [a for a in client.get("/api/me/applications").json() if a["id"] == app_id]
+    assert mine and mine[0]["status"] == "pending"
+
+
+def test_draft_copy_duplicates_payload_with_suffix(client):
+    login(client, "chen")
+    post = new_post(client, (2,))
+    login(client, "chen")
+    draft = client.post(f"/api/posts/{post['id']}/copy-draft", json={}).json()
+    listed = client.get("/api/drafts").json()
+    original = next(d for d in listed if d["id"] == draft["id"])
+    copied = client.post(f"/api/drafts/{draft['id']}/copy", json={})
+    assert copied.status_code == 201, copied.text
+    listed = client.get("/api/drafts").json()
+    replica = next(d for d in listed if d["id"] == copied.json()["id"])
+    assert replica["payload"]["title"] == original["payload"]["title"] + "（副本）"
+    assert replica["payload"]["description"] == original["payload"]["description"]
+    assert replica["payload"]["roles"] == original["payload"]["roles"]
+    # 不能复制他人的草稿
+    login(client, "shen")
+    assert client.post(f"/api/drafts/{draft['id']}/copy", json={}).status_code == 404

@@ -12,7 +12,11 @@ export function PostCard({ post }: { post: Post }) {
           {post.category} / {String(post.id).padStart(2, '0')}
         </span>
         <Badge color={post.status === 'open' ? 'green' : 'gray'}>
-          {post.status === 'open' ? '招募中' : '已结束'}
+          {post.status === 'open'
+            ? '招募中'
+            : post.end_reason === 'taken_down'
+              ? '已下架'
+              : '已结束'}
         </Badge>
       </div>
       <h3>

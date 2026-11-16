@@ -132,9 +132,17 @@ export function Guard({ children }: { children: ReactNode }) {
     </Empty>
   );
 }
-export function Field({ label, children }: { label: string; children: ReactNode }) {
+export function Field({
+  label,
+  id,
+  children,
+}: {
+  label: string;
+  id?: string;
+  children: ReactNode;
+}) {
   return (
-    <label className="field react-field">
+    <label className="field react-field" id={id}>
       <span>{label}</span>
       {children}
     </label>
@@ -174,5 +182,30 @@ export function SafeLink({ url, children }: { url?: string; children: ReactNode 
     <a className="link" href={url} target="_blank" rel="noopener noreferrer">
       {children} ↗
     </a>
+  );
+}
+
+export function LoginPromptModal({
+  open,
+  onClose,
+  returnTo,
+}: {
+  open: boolean;
+  onClose: () => void;
+  returnTo: string;
+}) {
+  if (!open) return null;
+  return (
+    <Modal title="需要登录" onClose={onClose}>
+      <p style={{ margin: '18px 0' }}>该操作需要登录后才能进行。</p>
+      <div className="actions" style={{ marginTop: 20 }}>
+        <button type="button" className="btn secondary" onClick={onClose}>
+          稍后再说
+        </button>
+        <Link className="btn" to={'/auth?return=' + encodeURIComponent(returnTo)}>
+          前往登录
+        </Link>
+      </div>
+    </Modal>
   );
 }

@@ -147,7 +147,7 @@ def notify(db, user_id, text, post_id=None):
 
 def expire_posts(db):
     for post in db.execute(
-        "SELECT id,owner_id FROM posts WHERE status='open' AND deadline<=?", (now(),)
+        "SELECT id,owner_id,title FROM posts WHERE status='open' AND deadline<=?", (now(),)
     ).fetchall():
         for app in db.execute(
             "SELECT id,user_id FROM applications WHERE post_id=? AND status='pending'",
@@ -166,4 +166,9 @@ def expire_posts(db):
             "UPDATE posts SET status='ended',end_reason='expired' WHERE id=?",
             (post["id"],),
         )
-        notify(db, post["owner_id"], "招募已到截止时间，自动结束；可延长截止时间重新开放。", post["id"])
+        notify(
+            db,
+            post["owner_id"],
+            f"招募「{post['title']}」已到截止时间，自动结束；可延长截止时间重新开放。",
+            post["id"],
+        )

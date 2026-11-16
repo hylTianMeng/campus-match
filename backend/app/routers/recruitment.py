@@ -163,6 +163,7 @@ def posts(
     )
     # 需求变更（待与组长确认）：关闭「公开我的发布」后，该用户的招募从大厅公开列表隐藏；
     # 管理员（is_admin=1）仍能看到全部招募，隐私设置不影响管理员权限。
+    # 已下架（end_reason='taken_down'）的招募从普通用户列表隐藏，管理员仍可见以便撤回下架。
     is_admin = user["is_admin"] if user else 0
     # Rank tag matches before applying pagination; category only filters results.
     relevance = (
@@ -171,12 +172,12 @@ def posts(
         "ELSE 2 END,"
         if q else ""
     )
-    parameters = [is_admin, category, category, tag, tag, q, q]
+    parameters = [is_admin, is_admin, category, category, tag, tag, q, q]
     if q:
         parameters.extend([q, q])
     parameters.extend([limit, offset])
     rows = db.execute(
-        "SELECT p.* FROM posts p JOIN users u ON u.id=p.owner_id WHERE p.status='open' AND u.banned=0 AND (u.public_posts=1 OR ?=1) AND (?='' OR p.category=?) AND (?='' OR EXISTS (SELECT 1 FROM json_each(p.tags) WHERE lower(value)=lower(?))) AND (?='' OR instr(lower(p.title || p.category || p.description || p.tags),lower(?))>0) ORDER BY "
+        "SELECT p.* FROM posts p JOIN users u ON u.id=p.owner_id WHERE u.banned=0 AND (u.public_posts=1 OR ?=1) AND (p.status='open' OR (?=1 AND p.end_reason='taken_down')) AND (?='' OR p.category=?) AND (?='' OR EXISTS (SELECT 1 FROM json_each(p.tags) WHERE lower(value)=lower(?))) AND (?='' OR instr(lower(p.title || p.category || p.description || p.tags),lower(?))>0) ORDER BY "
         + relevance + order
         + " LIMIT ? OFFSET ?",
         parameters,
@@ -197,6 +198,8 @@ def detail(post_id: int, user=Depends(optional_user), db=Depends(get_db_readonly
     is_admin = bool(user and user["is_admin"])
     is_owner = bool(user and user["id"] == post["owner_id"])
     if not owner["public_posts"] and not is_admin and not is_owner:
+        raise HTTPException(404, "此内容暂不可查看")
+    if post["end_reason"] == "taken_down" and not is_admin and not is_owner:
         raise HTTPException(404, "此内容暂不可查看")
     return post_view(db, post, user)
 
@@ -421,6 +424,23 @@ def copy_draft(post_id: int, user=Depends(student), db=Depends(get_db)):
     draft_id = db.execute("INSERT INTO drafts(user_id,payload,updated_at) VALUES(?,?,?)",
                           (user["id"], json.dumps(payload, ensure_ascii=False), now())).lastrowid
     return {"id": draft_id}
+
+
+@router.post("/drafts/{draft_id}/copy", status_code=201)
+def duplicate_draft(draft_id: int, user=Depends(student), db=Depends(get_db)):
+    row = db.execute(
+        "SELECT * FROM drafts WHERE id=? AND user_id=?", (draft_id, user["id"])
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "草稿不存在")
+    payload = json.loads(row["payload"])
+    title = payload.get("title") or ""
+    payload["title"] = (title + "（副本）") if title.strip() else "未命名招募（副本）"
+    new_id = db.execute(
+        "INSERT INTO drafts(user_id,payload,updated_at) VALUES(?,?,?)",
+        (user["id"], json.dumps(payload, ensure_ascii=False), now()),
+    ).lastrowid
+    return {"id": new_id}
 
 
 @router.post("/posts/{post_id}/end")

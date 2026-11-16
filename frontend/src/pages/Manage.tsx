@@ -90,19 +90,19 @@ function useConfirmation(refresh: () => void) {
           </label>
         )}
         <ErrorNote error={error} />
-        {dialog.onForce && error.includes('已有申请历史') && (
-          <button
-            type="button"
-            className="link"
-            onClick={() => {
-              setDialog(undefined);
-              dialog.onForce?.();
-            }}
-          >
-            仍要删除
-          </button>
-        )}
         <div className="actions">
+          {dialog.onForce && error.includes('已有申请历史') && (
+            <button
+              type="button"
+              className="link"
+              onClick={() => {
+                setDialog(undefined);
+                dialog.onForce?.();
+              }}
+            >
+              仍要删除
+            </button>
+          )}
           <button
             type="button"
             className="btn secondary"
@@ -225,7 +225,13 @@ export function Posts() {
                 <Link to={'/detail/' + p.id}>{p.title}</Link>
               </h3>
               <p>
-                {p.category} · {p.status === 'open' ? '招募中' : '已结束'} · {p.pending_count}{' '}
+                {p.category} ·{' '}
+                {p.status === 'open'
+                  ? '招募中'
+                  : p.end_reason === 'taken_down'
+                    ? '已下架'
+                    : '已结束'}{' '}
+                · {p.pending_count}{' '}
                 人待审核 · 更新于 {date(p.updated_at)}
               </p>
             </div>
@@ -288,7 +294,17 @@ export function Posts() {
 }
 export function Drafts() {
   const data = useData<Draft[]>('/drafts'),
-    { ask, modal } = useConfirmation(data.refresh);
+    { ask, modal } = useConfirmation(data.refresh),
+    { toast } = useSession();
+  const copyDraft = async (d: Draft) => {
+    try {
+      await write('/drafts/' + d.id + '/copy', 'POST');
+      toast('已复制草稿');
+      data.refresh();
+    } catch (e) {
+      toast((e as Error).message);
+    }
+  };
   return (
     <>
       <Header title="草稿箱" sub="缺项也可以保存。填写时自动保存，也可以手动保存。">
@@ -317,6 +333,9 @@ export function Drafts() {
               <Link className="btn secondary" to={'/publish?draft=' + d.id}>
                 继续编辑
               </Link>
+              <button className="btn secondary" onClick={() => void copyDraft(d)}>
+                复制
+              </button>
               <button
                 className="btn danger"
                 onClick={() =>
