@@ -1,10 +1,11 @@
 """Administrator endpoints for user management (list / ban / unban)."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 
 from ..auth import admin
-from ..db import get_db, get_db_readonly, now, notify
+from ..db import get_db
 from ..schemas import BanUser, UnbanUser
+from ..governance import set_user_ban
 
 router = APIRouter(prefix="/api/admin", tags=["管理"])
 
@@ -20,7 +21,7 @@ def list_users(
     limit: int = Query(100, ge=1, le=100),
     offset: int = Query(0, ge=0),
     user=Depends(admin),
-    db=Depends(get_db_readonly),
+    db=Depends(get_db),
 ):
     rows = db.execute(
         "SELECT * FROM users WHERE (?='' OR instr(name,?)>0 OR instr(email,?)>0) AND (?='' OR banned=?) ORDER BY id LIMIT ? OFFSET ?",
@@ -44,31 +45,11 @@ def list_users(
 
 @router.post("/users/{user_id}/ban")
 def ban_user(user_id: int, data: BanUser, user=Depends(admin), db=Depends(get_db)):
-    target = db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
-    if not target:
-        raise HTTPException(404, "用户不存在")
-    if target["id"] == user["id"]:
-        raise HTTPException(409, "不能封禁自己")
-    if target["is_admin"]:
-        raise HTTPException(403, "不能封禁管理员账号")
-    db.execute("UPDATE users SET banned=1 WHERE id=?", (user_id,))
-    db.execute(
-        "INSERT INTO admin_actions(admin_id,target_user_id,action,reason,created_at) VALUES(?,?,?,?,?)",
-        (user["id"], user_id, "ban", data.reason, now()),
-    )
-    notify(db, user_id, "你的账号已被封禁。", None)
+    set_user_ban(db, user, user_id, True, data.reason)
     return {"ok": True}
 
 
 @router.post("/users/{user_id}/unban")
 def unban_user(user_id: int, data: UnbanUser, user=Depends(admin), db=Depends(get_db)):
-    target = db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
-    if not target:
-        raise HTTPException(404, "用户不存在")
-    db.execute("UPDATE users SET banned=0 WHERE id=?", (user_id,))
-    db.execute(
-        "INSERT INTO admin_actions(admin_id,target_user_id,action,reason,created_at) VALUES(?,?,?,?,?)",
-        (user["id"], user_id, "unban", data.reason, now()),
-    )
-    notify(db, user_id, "你的账号已解封。", None)
+    set_user_ban(db, user, user_id, False, data.reason)
     return {"ok": True}

@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from .db import init_db, connect, expire_posts, WRITE_LOCK
-from .routers import auth, recruitment, community, account, admin
+from .routers import auth, recruitment, community, account, admin, governance
 
 
 def sweep():
@@ -90,3 +90,5 @@ app.include_router(recruitment.router)
 app.include_router(community.router)
 app.include_router(account.router)
 app.include_router(admin.router)
+
+app.include_router(governance.router)

@@ -1,3 +1,4 @@
+import { ReportButton, BlockButton } from '../components/SafetyActions';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useData, write } from '../api';
@@ -64,7 +65,7 @@ export function Detail() {
                   : '招募中'}
               </Badge>
             </div>
-            <h1 className="title">{post.title}</h1>
+            <h1 className="title">{post.title}</h1>{post.interaction_paused && <div className="notice warn">该招募当前暂停申请与审核，历史记录保留。</div>}
             <p className="small">
               发布于 {date(post.created_at)} · 截止 {date(post.deadline)}
             </p>
@@ -148,7 +149,7 @@ export function Detail() {
                 查看主页
               </Link>
               {!own && (
-                <Link className="btn" to={'/chats?peer=' + post.owner_id}>
+                <Link className="btn" to={'/chats?peer=' + post.owner_id + '&share=' + post.id}>
                   私信
                 </Link>
               )}
@@ -166,10 +167,10 @@ export function Detail() {
             ) : (
               <button
                 className="btn"
-                disabled={ended}
+                disabled={ended || post.interaction_paused}
                 onClick={() => authAction(() => setJoin(true))}
               >
-                {ended ? '招募已结束' : '一键参与'}
+                {ended ? '招募已结束' : post.interaction_paused ? '暂不可参与' : '一键参与'}
               </button>
             )}
           </div>
@@ -180,7 +181,7 @@ export function Detail() {
             </p>
           </div>
           <div className="panel">
-            <h3>把想法留在这里</h3>
+            <h3>把想法留在这里</h3><div className="actions">{!own && <><ReportButton type="post" targetId={post.id}/><BlockButton personId={post.owner_id}/></>}</div>
             <p className="small" style={{ margin: '12px 0' }}>
               收藏后可在个人中心回看，已结束招募也会保留。
             </p>

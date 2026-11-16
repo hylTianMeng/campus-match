@@ -195,7 +195,10 @@ export function Profile({ settings = false }: { settings?: boolean }) {
               </Field>
             </div>
             <Field label="个人简介">
-              <textarea value={form.bio} onChange={(e) => setForm({ ...form, bio: e.target.value })} />
+              <textarea
+                value={form.bio}
+                onChange={(e) => setForm({ ...form, bio: e.target.value })}
+              />
             </Field>
           </>
         )}
@@ -230,7 +233,7 @@ export function Profile({ settings = false }: { settings?: boolean }) {
           <div className="panel">
             <h2>注销账号</h2>
             <p style={{ marginBottom: 16 }}>
-              注销后将匿名化你的账号资料，无法登录，且不可恢复。
+              注销后将匿名化账号资料并使登录失效。已发送消息、申请历史和治理记录会继续保留，供相关参与者回看及必要核查。
             </p>
             <button
               className="btn danger"

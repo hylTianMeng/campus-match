@@ -183,3 +183,22 @@ class AttachmentUpload(Input):
 
 class Message(Input):
     body: str = Field(min_length=1, max_length=4000)
+    client_id: Optional[str] = Field(default=None, min_length=1, max_length=80)
+
+
+class Reason(Input):
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class ReportCreate(Reason):
+    target_type: Literal["post", "user", "message"]
+    target_id: int = Field(gt=0)
+
+
+class ReportDecision(Reason):
+    action: Literal["dismiss", "resolve", "ban", "take-down"]
+
+
+class ConversationAccess(Reason):
+    first_user_id: int = Field(gt=0)
+    second_user_id: int = Field(gt=0)

@@ -75,6 +75,20 @@ def init_db():
                 db.execute("UPDATE posts SET updated_at=created_at WHERE updated_at=''")
             # A 模块（账号）迁移：is_admin / avatar_path / deleted_at + schema_version=2。
             migrate(db)
+            additions = {
+                "posts": {"taken_down": "INTEGER NOT NULL DEFAULT 0"},
+                "messages": {"client_id": "TEXT"},
+                "notices": {"event_key": "TEXT", "kind": "TEXT NOT NULL DEFAULT 'business'",
+                            "target_path": "TEXT NOT NULL DEFAULT ''"},
+            }
+            for table, columns in additions.items():
+                existing = {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}
+                for name, definition in columns.items():
+                    if name not in existing:
+                        db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+            db.execute("CREATE UNIQUE INDEX IF NOT EXISTS message_request_key ON messages(sender_id,client_id) WHERE client_id IS NOT NULL")
+            db.execute("CREATE UNIQUE INDEX IF NOT EXISTS notice_event_key ON notices(user_id,event_key) WHERE event_key IS NOT NULL")
+            db.executescript((Path(__file__).parent / "governance.sql").read_text())
         finally:
             db.close()
 
@@ -138,10 +152,13 @@ def get_db_readonly():
         db.close()
 
 
-def notify(db, user_id, text, post_id=None):
+def notify(db, user_id, text, post_id=None, *, event_key=None, kind="business", target_path=None):
+    """Persist the inbox event in the caller's business transaction."""
+    if target_path is None:
+        target_path = f"/detail/{post_id}" if post_id else "/settings"
     db.execute(
-        "INSERT INTO notices(user_id,body,post_id,created_at) VALUES(?,?,?,?)",
-        (user_id, text, post_id, now()),
+        "INSERT OR IGNORE INTO notices(user_id,body,post_id,created_at,event_key,kind,target_path) VALUES(?,?,?,?,?,?,?)",
+        (user_id, text, post_id, now(), event_key, kind, target_path),
     )
 
 
@@ -153,7 +170,7 @@ def expire_posts(db):
             "SELECT id,user_id FROM applications WHERE post_id=? AND status='pending'",
             (post["id"],),
         ).fetchall():
-            notify(db, app["user_id"], "招募已截止，待审核申请已过期。", post["id"])
+            notify(db, app["user_id"], "招募已截止，待审核申请已过期。", post["id"], event_key=f"application-expired:{app['id']}", kind="application", target_path="/applications")
             db.execute(
                 "INSERT INTO application_events(application_id,actor_id,status,reason,created_at) VALUES(?,NULL,?,?,?)",
                 (app["id"], "expired", "招募已截止", now()),

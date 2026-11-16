@@ -4,6 +4,7 @@ import json
 from fastapi import HTTPException
 from .db import now, notify
 from .auth import public_user, avatar_url
+from .governance import require_interaction, public_post, blocked
 
 
 def require_post(db, post_id):
@@ -35,6 +36,11 @@ def legacy_attachment(db, post, attachments=None):
 
 def post_view(db, post, viewer=None):
     result = dict(post)
+    owner_status = db.execute("SELECT banned,deleted_at FROM users WHERE id=?", (post["owner_id"],)).fetchone()
+    result["interaction_paused"] = bool(post["taken_down"] or owner_status["banned"] or owner_status["deleted_at"])
+    result["unavailable"] = not public_post(db, post, viewer)
+    if result["unavailable"]:
+        return {"id": post["id"], "title": "内容暂不可查看", "unavailable": True}
     result["tags"] = json.loads(post["tags"])
     result["extras"] = json.loads(post["extras"])
     attachments = [dict(row) for row in db.execute(
@@ -87,11 +93,11 @@ def transition(db, app, status, reason, actor_id):
         "UPDATE applications SET status=?,reason=?,updated_at=? WHERE id=?",
         (status, reason, now(), app["id"]),
     )
-    db.execute(
+    event_id = db.execute(
         "INSERT INTO application_events(application_id,actor_id,status,reason,created_at) VALUES(?,?,?,?,?)",
         (app["id"], actor_id, status, reason, now()),
-    )
-    notify(db, app["user_id"], reason, app["post_id"])
+    ).lastrowid
+    notify(db, app["user_id"], reason, app["post_id"], event_key=f"application-event:{event_id}", kind="application", target_path="/applications")
 
 
 def decide(db, app_id, user, action, reason):
@@ -100,6 +106,7 @@ def decide(db, app_id, user, action, reason):
         raise HTTPException(404, "申请不存在")
     post = require_post(db, app["post_id"])
     require_open(post)
+    require_interaction(db, post)
     if action in ("withdraw", "give-up"):
         if app["user_id"] != user["id"]:
             raise HTTPException(403, "只能操作本人的申请")
@@ -113,7 +120,7 @@ def decide(db, app_id, user, action, reason):
             "主动撤回申请" if action == "withdraw" else "主动放弃录取",
             user["id"],
         )
-        notify(db, post["owner_id"], "有申请者撤回申请或放弃录取。", post["id"])
+        notify(db, post["owner_id"], "有申请者撤回申请或放弃录取。", post["id"], event_key=f"application-owner:{app['id']}:{action}", kind="application", target_path=f"/posts/{post['id']}/applications")
         return
     require_owner(post, user)
     expected = "accepted" if action == "revoke" else "pending"
@@ -133,7 +140,9 @@ def decide(db, app_id, user, action, reason):
     applicant = db.execute(
         "SELECT * FROM users WHERE id=?", (app["user_id"],)
     ).fetchone()
-    if applicant["banned"] or not applicant["verified"]:
+    if blocked(db, app["user_id"], post["owner_id"]):
+        raise HTTPException(409, "当前申请无法继续审核")
+    if applicant["banned"] or not applicant["verified"] or applicant["deleted_at"]:
         raise HTTPException(409, "申请者当前不可录取")
     if db.execute(
         "SELECT 1 FROM applications WHERE post_id=? AND user_id=? AND status='accepted'",
@@ -170,4 +179,4 @@ def decide(db, app_id, user, action, reason):
             "UPDATE posts SET status='ended',end_reason='filled' WHERE id=?",
             (post["id"],),
         )
-        notify(db, post["owner_id"], "全部岗位已满，招募结束，结果已锁定。", post["id"])
+        notify(db, post["owner_id"], "全部岗位已满，招募结束，结果已锁定。", post["id"], event_key=f"filled:{post['id']}", kind="recruitment", target_path="/posts")

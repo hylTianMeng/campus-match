@@ -277,7 +277,7 @@ export function Applications({ team = false }: { team?: boolean }) {
               ))}
             </div>
           </details>
-          {!team && a.post_status === 'open' && (
+          {!team && !a.post_paused && a.post_status === 'open' && (
             <div className="actions" style={{ marginTop: 16 }}>
               {owner ? (
                 <>

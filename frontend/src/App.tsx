@@ -7,6 +7,15 @@ import { Auth } from './pages/Auth';
 import { Register } from './pages/Register';
 import { Verify } from './pages/Verify';
 import { Forgot } from './pages/Forgot';
+import {
+  AdminGuard,
+  BlockList,
+  OwnReports,
+  ReportAdmin,
+  PostAdmin,
+  PrivateMessageAdmin,
+  ActionHistory,
+} from './pages/Governance';
 import { Admin } from './pages/Admin';
 import { Detail } from './pages/Detail';
 import { Publish } from './pages/Publish';
@@ -37,7 +46,59 @@ export default function App() {
               path="admin"
               element={
                 <Guard>
-                  <Admin />
+                  <AdminGuard>
+                    <Admin />
+                  </AdminGuard>
+                </Guard>
+              }
+            />
+            <Route
+              path="admin/posts"
+              element={
+                <Guard>
+                  <AdminGuard>
+                    <PostAdmin />
+                  </AdminGuard>
+                </Guard>
+              }
+            />
+            <Route
+              path="admin/reports"
+              element={
+                <Guard>
+                  <AdminGuard>
+                    <ReportAdmin />
+                  </AdminGuard>
+                </Guard>
+              }
+            />
+            <Route
+              path="admin/messages"
+              element={
+                <Guard>
+                  <AdminGuard>
+                    <PrivateMessageAdmin />
+                  </AdminGuard>
+                </Guard>
+              }
+            />
+            <Route
+              path="admin/audits"
+              element={
+                <Guard>
+                  <AdminGuard>
+                    <ActionHistory access />
+                  </AdminGuard>
+                </Guard>
+              }
+            />
+            <Route
+              path="admin/history"
+              element={
+                <Guard>
+                  <AdminGuard>
+                    <ActionHistory />
+                  </AdminGuard>
                 </Guard>
               }
             />
@@ -105,6 +166,8 @@ export default function App() {
                 </Guard>
               }
             >
+              <Route path="blocks" element={<BlockList />} />
+              <Route path="reports" element={<OwnReports />} />
               <Route path="profile" element={<Profile key="profile" />} />
               <Route path="settings" element={<Profile settings key="settings" />} />
               <Route path="posts" element={<Posts />} />

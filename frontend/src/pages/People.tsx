@@ -1,3 +1,4 @@
+import { ReportButton, BlockButton } from '../components/SafetyActions';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useData } from '../api';
@@ -111,7 +112,7 @@ export function PersonPage() {
             </Link>
           )}
         </div>
-        <p style={{ margin: '20px 0' }}>{p.bio}</p>
+        <div className="actions">{user?.id !== p.id && <><ReportButton type="user" targetId={p.id}/><BlockButton personId={p.id}/></>}</div><p style={{ margin: '20px 0' }}>{p.bio}</p>
         <Tags values={p.tags} />
       </div>
       <div className="person-grid">

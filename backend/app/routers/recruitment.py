@@ -11,6 +11,8 @@ from ..auth import optional_user, current_user, student
 from ..schemas import PostCreate, PostEdit, ApplicationCreate, Decision, Draft, AttachmentUpload
 from ..services import require_post, require_owner, require_open, post_view, decide, legacy_attachment, transition
 
+from ..governance import require_visible, require_interaction, blocked
+
 router = APIRouter(prefix="/api", tags=["招募与申请"])
 
 MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024
@@ -110,10 +112,9 @@ def upload_attachment(data: AttachmentUpload, user=Depends(student), db=Depends(
 
 @router.get("/posts/{post_id}/attachment")
 @router.get("/posts/{post_id}/attachments/{attachment_id}")
-def download_attachment(post_id: int, attachment_id: int | None = None, db=Depends(get_db)):
+def download_attachment(post_id: int, attachment_id: int | None = None, user=Depends(optional_user), db=Depends(get_db_readonly)):
     post = require_post(db, post_id)
-    if db.execute("SELECT banned FROM users WHERE id=?", (post["owner_id"],)).fetchone()[0]:
-        raise HTTPException(404, "此内容暂不可查看")
+    require_visible(db, post, user)
     if attachment_id is None:
         legacy = legacy_attachment(db, post)
         attachment_id = legacy["id"] if legacy else None
@@ -139,7 +140,7 @@ def categories(db=Depends(get_db_readonly)):
 def post_tags(db=Depends(get_db)):
     rows = db.execute(
         "SELECT value FROM posts p JOIN users u ON u.id=p.owner_id "
-        "JOIN json_each(p.tags) WHERE p.status='open' AND u.banned=0 "
+        "JOIN json_each(p.tags) WHERE p.status='open' AND p.taken_down=0 AND u.banned=0 AND u.deleted_at IS NULL AND u.public_posts=1 "
         "AND value<>'' GROUP BY value ORDER BY count(*) DESC,value"
     ).fetchall()
     return [row["value"] for row in rows]
@@ -176,7 +177,7 @@ def posts(
         parameters.extend([q, q])
     parameters.extend([limit, offset])
     rows = db.execute(
-        "SELECT p.* FROM posts p JOIN users u ON u.id=p.owner_id WHERE p.status='open' AND u.banned=0 AND (u.public_posts=1 OR ?=1) AND (?='' OR p.category=?) AND (?='' OR EXISTS (SELECT 1 FROM json_each(p.tags) WHERE lower(value)=lower(?))) AND (?='' OR instr(lower(p.title || p.category || p.description || p.tags),lower(?))>0) ORDER BY "
+        "SELECT p.* FROM posts p JOIN users u ON u.id=p.owner_id WHERE p.status='open' AND p.taken_down=0 AND u.banned=0 AND u.deleted_at IS NULL AND (u.public_posts=1 OR ?=1) AND (?='' OR p.category=?) AND (?='' OR EXISTS (SELECT 1 FROM json_each(p.tags) WHERE lower(value)=lower(?))) AND (?='' OR instr(lower(p.title || p.category || p.description || p.tags),lower(?))>0) ORDER BY "
         + relevance + order
         + " LIMIT ? OFFSET ?",
         parameters,
@@ -187,17 +188,7 @@ def posts(
 @router.get("/posts/{post_id}")
 def detail(post_id: int, user=Depends(optional_user), db=Depends(get_db_readonly)):
     post = require_post(db, post_id)
-    owner = db.execute(
-        "SELECT banned, public_posts FROM users WHERE id=?", (post["owner_id"],)
-    ).fetchone()
-    if owner["banned"]:
-        raise HTTPException(404, "此内容暂不可查看")
-    # 需求变更（待与组长确认）：关闭「公开我的发布」后，非本人、非管理员访问详情返回 404（隐藏）；
-    # 本人（owner）与管理员（is_admin=1）仍可访问，隐私设置不影响管理员权限。
-    is_admin = bool(user and user["is_admin"])
-    is_owner = bool(user and user["id"] == post["owner_id"])
-    if not owner["public_posts"] and not is_admin and not is_owner:
-        raise HTTPException(404, "此内容暂不可查看")
+    require_visible(db, post, user)
     return post_view(db, post, user)
 
 
@@ -259,6 +250,7 @@ def create(data: PostCreate, user=Depends(student), db=Depends(get_db)):
 def edit(post_id: int, data: PostEdit, user=Depends(student), db=Depends(get_db)):
     post = require_post(db, post_id)
     require_owner(post, user)
+    require_interaction(db, post)
     fields = data.model_fields_set
     place = data.place if "place" in fields else post["place"]
     tags = data.tags if "tags" in fields else json.loads(post["tags"])
@@ -386,6 +378,7 @@ def end(post_id: int, user=Depends(student), db=Depends(get_db)):
     post = require_post(db, post_id)
     require_owner(post, user)
     require_open(post)
+    require_interaction(db, post)
     # TD-03 is unresolved: do not silently invent a terminal state for pending apps.
     if db.execute(
         "SELECT 1 FROM applications WHERE post_id=? AND status='pending'", (post_id,)
@@ -417,6 +410,10 @@ def apply(
 ):
     post = require_post(db, post_id)
     require_open(post)
+    require_visible(db, post, user)
+    require_interaction(db, post)
+    if blocked(db, user["id"], post["owner_id"]):
+        raise HTTPException(403, "当前无法向此招募提交申请")
     if post["owner_id"] == user["id"]:
         raise HTTPException(409, "不能申请自己的招募")
     if db.execute(
@@ -459,14 +456,15 @@ def apply(
         (app_id, user["id"], "pending", "提交申请", now()),
     )
     notify(
-        db, post["owner_id"], user["name"] + "申请了「" + role["name"] + "」。", post_id
+        db, post["owner_id"], user["name"] + "申请了「" + role["name"] + "」。", post_id,
+        event_key=f"application-submitted:{app_id}", kind="application", target_path=f"/posts/{post_id}/applications"
     )
     return {"id": app_id, "status": "pending"}
 
 
 def application_rows(db, where, args):
     rows = db.execute(
-        "SELECT a.*,r.name AS role_name,p.title,p.status AS post_status,u.name AS applicant_name FROM applications a JOIN roles r ON r.id=a.role_id JOIN posts p ON p.id=a.post_id JOIN users u ON u.id=a.user_id WHERE "
+        "SELECT a.*,r.name AS role_name,p.title,p.status AS post_status,(p.taken_down OR owner.banned OR owner.deleted_at IS NOT NULL) AS post_paused,u.name AS applicant_name FROM applications a JOIN roles r ON r.id=a.role_id JOIN posts p ON p.id=a.post_id JOIN users u ON u.id=a.user_id JOIN users owner ON owner.id=p.owner_id WHERE "
         + where
         + " ORDER BY a.id DESC",
         args,
@@ -508,7 +506,7 @@ def favorites(user=Depends(current_user), db=Depends(get_db_readonly)):
     return [
         post_view(db, p, user)
         for p in db.execute(
-            "SELECT p.* FROM posts p JOIN favorites f ON f.post_id=p.id JOIN users u ON u.id=p.owner_id WHERE f.user_id=? AND u.banned=0 ORDER BY p.id DESC",
+            "SELECT p.* FROM posts p JOIN favorites f ON f.post_id=p.id JOIN users u ON u.id=p.owner_id WHERE f.user_id=? ORDER BY p.id DESC",
             (user["id"],),
         )
     ]

@@ -44,6 +44,9 @@ export interface Extras {
   attachmentLink: string;
 }
 export interface Post {
+  taken_down?: boolean;
+  interaction_paused?: boolean;
+  unavailable?: boolean;
   id: number;
   owner_id: number;
   title: string;
@@ -74,6 +77,7 @@ export interface Application {
   role_name: string;
   title: string;
   post_status: string;
+  post_paused?: boolean;
   status: string;
   message: string;
   experience: string;
@@ -111,6 +115,8 @@ export interface Draft {
   updated_at: string;
 }
 export interface Notice {
+  kind?: string;
+  target_path?: string;
   id: number;
   body: string;
   post_id: number | null;

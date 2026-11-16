@@ -1,12 +1,16 @@
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useEffect } from 'react';
 import { useSession } from '../context';
-import { useData } from '../api';
+import { useData, MESSAGE_POLL_MS } from '../api';
 import { Avatar } from './ui';
 export function Layout() {
   const { user } = useSession();
   const { pathname } = useLocation();
-  const { data } = useData<{ total: number }>(user ? '/unread' : null, 10000);
+  const { data, refresh } = useData<{ total: number }>(user ? '/unread' : null, MESSAGE_POLL_MS);
+  useEffect(() => {
+    window.addEventListener('inbox-changed', refresh);
+    return () => window.removeEventListener('inbox-changed', refresh);
+  }, [refresh]);
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [pathname]);
@@ -16,7 +20,9 @@ export function Layout() {
         <Link className="brand" to="/discover">
           <img className="brand-mark" src="/tsingmate-mark.svg" alt="" />
           <span>
-            <strong>Tsing<span>Mate</span></strong>
+            <strong>
+              Tsing<span>Mate</span>
+            </strong>
             <small>清华大学校园组队</small>
           </span>
         </Link>
@@ -82,6 +88,8 @@ const links = [
   ['/teams', '组队历史'],
   ['/favorites', '我的收藏'],
   ['/settings', '账号设置'],
+  ['/blocks', '黑名单'],
+  ['/reports', '我的举报'],
 ];
 export function PersonalLayout() {
   const { user } = useSession();

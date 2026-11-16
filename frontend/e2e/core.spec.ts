@@ -12,7 +12,7 @@ test('public discovery, search, mobile navigation and no overflow', async ({ pag
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto('/');
-  await expect(page.locator('article.card')).toHaveCount(6);
+  await expect(page.locator('article.card')).toHaveCount(7);
   await page.screenshot({ path: 'test-results/discover-desktop.png', fullPage: true });
   await page.getByLabel('招募关键词').fill('碳足迹');
   await page.getByRole('button', { name: '搜索招募', exact: true }).click();
@@ -20,10 +20,10 @@ test('public discovery, search, mobile navigation and no overflow', async ({ pag
   await page.getByRole('link', { name: '查看招募 ↗' }).click();
   await expect(page.getByRole('heading', { name: '关于这次合作' })).toBeVisible();
   await page.getByRole('button', { name: '一键参与', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '欢迎回到 CampusCrew' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '欢迎回到 TsingMate' })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/#/discover');
-  await expect(page.locator('article.card')).toHaveCount(6);
+  await expect(page.locator('article.card')).toHaveCount(7);
   await page.screenshot({ path: 'test-results/discover-mobile.png', fullPage: true });
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
@@ -42,18 +42,21 @@ test('real draft → publish → apply → owner approval → notification', asy
   await owner.goto('/#/publish');
   const title = '端到端测试：校园协作';
   await owner.getByLabel('招募标题 *', { exact: true }).fill(title);
-  await owner.getByLabel('上传附件（选填）').setInputFiles({
+  await owner.getByRole('button', { name: '＋ 添加自定义信息' }).click();
+  await owner.getByLabel('信息标题 *').fill('项目说明');
+  await owner.getByLabel('信息属性 *').selectOption('attachment');
+  await owner.getByLabel('附件内容 *').setInputFiles({
     name: '项目说明.pdf',
     mimeType: 'application/pdf',
     buffer: Buffer.from('%PDF-1.4\nCampusCrew attachment\n'),
   });
-  await expect(owner.getByText('已选：项目说明.pdf')).toBeVisible();
+  await expect(owner.getByText(/已上传：/)).toBeVisible();
   await owner.getByRole('button', { name: '手动保存草稿' }).click();
   await expect(owner.getByRole('status')).toHaveText('草稿已保存');
   await owner.getByRole('link', { name: '草稿箱', exact: true }).click();
   await owner.getByRole('link', { name: '继续编辑' }).click();
   await expect(owner.getByLabel('招募标题 *', { exact: true })).toHaveValue(title);
-  await expect(owner.getByText('已选：项目说明.pdf')).toBeVisible();
+  await expect(owner.getByText(/已上传：/)).toBeVisible();
   await owner.getByLabel('一级分类 *').selectOption('课程项目');
   await owner.getByLabel('招募说明 *').fill('共同完成可运行的校园协作项目。');
   await owner.getByRole('button', { name: '＋ 新增岗位' }).click();
@@ -65,7 +68,9 @@ test('real draft → publish → apply → owner approval → notification', asy
     .slice(0, 16);
   await owner.getByLabel('招募截止时间 *').fill(local);
   await owner.getByLabel('招募者联系方式（选填）').fill('contact@example.test');
-  await owner.getByLabel('预期成果').fill('一份可以演示的作品');
+  await owner.getByRole('button', { name: '＋ 添加自定义信息' }).click();
+  await owner.getByLabel('信息标题 *').nth(1).fill('预期成果');
+  await owner.getByLabel('文字内容 *').fill('一份可以演示的作品');
   await owner.getByRole('button', { name: '正式发布招募' }).click();
   await expect(owner.getByRole('heading', { name: title, exact: true })).toBeVisible();
   const detail = owner.url();
@@ -87,7 +92,7 @@ test('real draft → publish → apply → owner approval → notification', asy
   await owner.getByRole('button', { name: '确认通过申请' }).click();
   await expect(owner.getByText('已通过', { exact: true })).toBeVisible();
   await applicant.goto('/#/applications');
-  await expect(applicant.getByText('已通过', { exact: true })).toBeVisible();
+  await expect(applicant.locator('.panel').filter({ has: applicant.getByRole('link', { name: title, exact: true }) }).getByText('已通过', { exact: true })).toBeVisible();
   await applicant.goto(detail);
   await expect(applicant.getByRole('button', { name: '招募已结束', exact: true })).toBeDisabled();
   await applicant.goto('/#/notices');

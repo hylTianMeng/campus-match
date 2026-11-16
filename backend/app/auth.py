@@ -3,7 +3,7 @@ import hmac
 import json
 import secrets
 from fastapi import Depends, HTTPException, Request
-from .db import get_db_reader, now
+from .db import get_db_reader, get_db, now
 
 
 def hash_password(password):
@@ -42,7 +42,13 @@ def current_user(user=Depends(optional_user)):
     return user
 
 
-def student(user=Depends(current_user)):
+def student(user=Depends(current_user), db=Depends(get_db)):
+    # Recheck inside the write transaction after waiting for concurrent moderation.
+    user = db.execute(
+        "SELECT * FROM users WHERE id=? AND deleted_at IS NULL", (user["id"],)
+    ).fetchone()
+    if user is None:
+        raise HTTPException(401, "登录已失效")
     if not user["verified"]:
         raise HTTPException(403, "请先完成校园认证")
     if user["banned"]:
@@ -50,7 +56,12 @@ def student(user=Depends(current_user)):
     return user
 
 
-def admin(user=Depends(current_user)):
+def admin(user=Depends(current_user), db=Depends(get_db)):
+    user = db.execute(
+        "SELECT * FROM users WHERE id=? AND deleted_at IS NULL", (user["id"],)
+    ).fetchone()
+    if user is None:
+        raise HTTPException(401, "登录已失效")
     if not user["is_admin"]:
         raise HTTPException(403, "需要管理员权限")
     if user["banned"]:

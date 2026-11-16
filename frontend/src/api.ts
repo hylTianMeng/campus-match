@@ -93,3 +93,6 @@ export function useData<T>(path: string | null, poll = 0) {
   }, [path, poll, version]);
   return { data, error, loading, refresh };
 }
+
+export const MESSAGE_POLL_MS = 10000;
+export const refreshInbox = () => window.dispatchEvent(new Event('inbox-changed'));
