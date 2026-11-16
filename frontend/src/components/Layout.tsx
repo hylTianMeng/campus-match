@@ -1,10 +1,12 @@
-import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
-import { useEffect } from 'react';
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 import { useSession } from '../context';
 import { useData, MESSAGE_POLL_MS } from '../api';
 import { Avatar } from './ui';
 export function Layout() {
-  const { user } = useSession();
+  const { user, logout, toast } = useSession();
+  const [loggingOut, setLoggingOut] = useState(false);
+  const navigate = useNavigate();
   const { pathname } = useLocation();
   const { data, refresh } = useData<{ total: number }>(user ? '/unread' : null, MESSAGE_POLL_MS);
   useEffect(() => {
@@ -14,6 +16,19 @@ export function Layout() {
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [pathname]);
+
+  async function handleLogout() {
+    setLoggingOut(true);
+    try {
+      await logout();
+      navigate('/discover', { replace: true });
+    } catch (error) {
+      toast(error instanceof Error ? error.message : '退出登录失败，请重试。');
+    } finally {
+      setLoggingOut(false);
+    }
+  }
+
   return (
     <>
       <header className="topbar">
@@ -62,6 +77,14 @@ export function Layout() {
               <Link className="name" to="/profile">
                 {user.name}
               </Link>
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={loggingOut}
+                onClick={handleLogout}
+              >
+                退出登录
+              </button>
               {user.is_admin && (
                 <Link className="btn secondary" to="/admin">
                   后台
