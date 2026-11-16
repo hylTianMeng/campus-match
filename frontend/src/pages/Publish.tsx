@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, useData, write } from '../api';
 import { useSession } from '../context';
 import type { Draft, Post, PostInput, RoleInput, InformationItem } from '../types';
-import { Header, Field, ErrorNote, LoadState, Modal, tagsFrom, date } from '../components/ui';
+import { Header, Field, ErrorNote, LoadState, Modal, tagsFrom } from '../components/ui';
 const blankRole = (): RoleInput => ({ name: '', capacity: 1, description: '', tags: [] });
 const blankPost = (): PostInput => ({
   title: '',
@@ -44,11 +44,10 @@ export function Publish() {
     [error, setError] = useState(''),
     [loading, setLoading] = useState(true),
     [loadError, setLoadError] = useState(''),
-    [confirmNoRoles, setConfirmNoRoles] = useState(false),
-    [confirmTimeMismatch, setConfirmTimeMismatch] = useState(false);
+    [confirmNoRoles, setConfirmNoRoles] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const formRef = useRef<HTMLFormElement>(null),
-    allowNoRoles = useRef(false),
-    allowTimeMismatch = useRef(false);
+    allowNoRoles = useRef(false);
   const categories = useData<string[]>('/categories');
   const edit = Boolean(id);
   const sourceDraft = params.get('draft');
@@ -243,6 +242,73 @@ export function Publish() {
     }
     navigate(path);
   }
+  function validateAll(): Record<string, string> {
+    const errs: Record<string, string> = {};
+    const titleEditable = !edit || !ended;
+    const baseEditable = !edit || !ended;
+    const rolesEditable = !edit || !ended;
+    const deadlineEditable = !edit || !ended || endReason === 'expired';
+    if (titleEditable && !form.title.trim()) errs.title = '请填写招募标题';
+    if (baseEditable && !form.category) errs.category = '请选择一级分类';
+    if (!form.description.trim()) errs.description = '请填写招募说明';
+    if (rolesEditable)
+      form.roles.forEach((r, i) => {
+        if (!r.name.trim()) errs[`role-${i}-name`] = '请填写岗位名称';
+        if (!r.capacity || r.capacity < 1)
+          errs[`role-${i}-capacity`] = '招募人数需为不小于 1 的整数';
+      });
+    if (deadlineEditable && !form.deadline) errs.deadline = '请填写招募截止时间';
+    if (
+      baseEditable &&
+      form.event_time &&
+      form.deadline &&
+      new Date(form.event_time).getTime() < new Date(form.deadline).getTime()
+    ) {
+      errs.event_time = '活动开始时间早于招募截止时间，请调整';
+      errs.deadline = '招募截止时间晚于活动开始时间，请调整';
+    }
+    (form.extras.items ?? []).forEach((item, i) => {
+      if (!item.title.trim()) errs[`item-${i}-title`] = '请填写信息标题';
+      if (item.type === 'text' && !item.content.trim())
+        errs[`item-${i}-content`] = '请填写文字内容';
+      if (item.type === 'link' && !item.content.trim())
+        errs[`item-${i}-content`] = '请填写网址';
+      if (item.type === 'attachment' && !item.attachment_id)
+        errs[`item-${i}-content`] = '请上传附件内容';
+    });
+    return errs;
+  }
+  function scrollToFirstError(errs: Record<string, string>) {
+    const order = ['title', 'category', 'description'];
+    form.roles.forEach((_, i) => order.push(`role-${i}-name`, `role-${i}-capacity`));
+    order.push('deadline', 'event_time');
+    (form.extras.items ?? []).forEach((_, i) =>
+      order.push(`item-${i}-title`, `item-${i}-content`),
+    );
+    const first = order.find((key) => errs[key]);
+    if (first)
+      document
+        .getElementById('pf-' + first)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  useEffect(() => {
+    setErrors((prev) => {
+      if (!Object.keys(prev).length) return prev;
+      const fresh = validateAll();
+      const kept: Record<string, string> = {};
+      for (const key of Object.keys(prev)) if (fresh[key]) kept[key] = fresh[key];
+      return kept;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form]);
+  const markErr = (key: string) =>
+    errors[key] ? { borderColor: 'var(--red)' } : undefined;
+  const fieldErr = (key: string) =>
+    errors[key] ? (
+      <p className="small" style={{ color: 'var(--red)', margin: '6px 0 0' }}>
+        {errors[key]}
+      </p>
+    ) : null;
   if (loading) return <LoadState loading />;
   if (loadError) return <ErrorNote error={loadError} />;
   return (
@@ -279,22 +345,18 @@ export function Publish() {
       )}
       <form
         ref={formRef}
+        noValidate
         onSubmit={async (e) => {
           e.preventDefault();
           setError('');
-          if (!ended && !form.roles.length && !allowNoRoles.current) {
-            setConfirmNoRoles(true);
+          const errs = validateAll();
+          if (Object.keys(errs).length) {
+            setErrors(errs);
+            scrollToFirstError(errs);
             return;
           }
-          const scheduleEditable = !ended || endReason === 'expired';
-          if (
-            scheduleEditable &&
-            form.event_time &&
-            form.deadline &&
-            new Date(form.deadline).getTime() <= new Date(form.event_time).getTime() &&
-            !allowTimeMismatch.current
-          ) {
-            setConfirmTimeMismatch(true);
+          if (!ended && !form.roles.length && !allowNoRoles.current) {
+            setConfirmNoRoles(true);
             return;
           }
           setBusy(true);
@@ -353,7 +415,6 @@ export function Publish() {
             setError((e as Error).message);
             publishing.current = false;
             allowNoRoles.current = false;
-            allowTimeMismatch.current = false;
             if (!edit && revision > savedRevision.current)
               void persistDraft(form, revision).catch(() => {});
           } finally {
@@ -365,28 +426,36 @@ export function Publish() {
           <section>
             <div className="panel">
               <h2>01 / 基本信息</h2>
-              <Field label="招募标题 *">
-                <input
-                  required
-                  disabled={ended}
-                  maxLength={160}
-                  value={form.title}
-                  onChange={(e) => set('title', e.target.value)}
-                />
-              </Field>
-              <Field label="一级分类 *">
-                <select
-                  required
-                  disabled={ended}
-                  value={form.category}
-                  onChange={(e) => set('category', e.target.value)}
-                >
-                  <option value="">请选择分类</option>
-                  {categories.data?.map((c) => (
-                    <option key={c}>{c}</option>
-                  ))}
-                </select>
-              </Field>
+              <div id="pf-title">
+                <Field label="招募标题 *">
+                  <input
+                    required
+                    disabled={ended}
+                    maxLength={160}
+                    style={markErr('title')}
+                    value={form.title}
+                    onChange={(e) => set('title', e.target.value)}
+                  />
+                </Field>
+                {fieldErr('title')}
+              </div>
+              <div id="pf-category">
+                <Field label="一级分类 *">
+                  <select
+                    required
+                    disabled={ended}
+                    style={markErr('category')}
+                    value={form.category}
+                    onChange={(e) => set('category', e.target.value)}
+                  >
+                    <option value="">请选择分类</option>
+                    {categories.data?.map((c) => (
+                      <option key={c}>{c}</option>
+                    ))}
+                  </select>
+                </Field>
+                {fieldErr('category')}
+              </div>
               <ErrorNote error={categories.error} />
               <Field label="招募者联系方式（选填）">
                 <input
@@ -395,16 +464,20 @@ export function Publish() {
                 />
               </Field>
               <p className="small muted">填写后会在公开招募详情中展示，访客也可查看。</p>
-              <Field label="招募说明 *">
-                <textarea
-                  required
-                  rows={6}
-                  maxLength={20000}
-                  value={form.description}
-                  onChange={(e) => set('description', e.target.value)}
-                  placeholder="介绍目标、协作方式与投入期待"
-                />
-              </Field>
+              <div id="pf-description">
+                <Field label="招募说明 *">
+                  <textarea
+                    required
+                    rows={6}
+                    maxLength={20000}
+                    style={markErr('description')}
+                    value={form.description}
+                    onChange={(e) => set('description', e.target.value)}
+                    placeholder="介绍目标、协作方式与投入期待"
+                  />
+                </Field>
+                {fieldErr('description')}
+              </div>
             </div>
             <div className="panel" id="role-section">
               <h2>02 / 招募岗位</h2>
@@ -430,25 +503,33 @@ export function Publish() {
                     )}
                   </div>
                   <div className="formgrid" style={{ marginTop: 15 }}>
-                    <Field label="岗位名称 *">
-                      <input
-                        required
-                        disabled={ended}
-                        value={r.name}
-                        onChange={(e) => setRole(i, { name: e.target.value })}
-                      />
-                    </Field>
-                    <Field label="招募人数 *">
-                      <input
-                        required
-                        disabled={ended}
-                        type="number"
-                        min={Math.max(1, r.accepted ?? 0)}
-                        max={100}
-                        value={r.capacity}
-                        onChange={(e) => setRole(i, { capacity: Number(e.target.value) })}
-                      />
-                    </Field>
+                    <div id={`pf-role-${i}-name`}>
+                      <Field label="岗位名称 *">
+                        <input
+                          required
+                          disabled={ended}
+                          style={markErr(`role-${i}-name`)}
+                          value={r.name}
+                          onChange={(e) => setRole(i, { name: e.target.value })}
+                        />
+                      </Field>
+                      {fieldErr(`role-${i}-name`)}
+                    </div>
+                    <div id={`pf-role-${i}-capacity`}>
+                      <Field label="招募人数 *">
+                        <input
+                          required
+                          disabled={ended}
+                          type="number"
+                          min={Math.max(1, r.accepted ?? 0)}
+                          max={100}
+                          style={markErr(`role-${i}-capacity`)}
+                          value={r.capacity}
+                          onChange={(e) => setRole(i, { capacity: Number(e.target.value) })}
+                        />
+                      </Field>
+                      {fieldErr(`role-${i}-capacity`)}
+                    </div>
                     <Field label="技能标签">
                       <input
                         disabled={ended}
@@ -495,23 +576,31 @@ export function Publish() {
             <div className="panel">
               <h2>03 / 时间、地点与标签</h2>
               <div className="formgrid">
-                <Field label="招募截止时间 *">
-                  <input
-                    required
-                    disabled={ended && endReason !== 'expired'}
-                    type="datetime-local"
-                    value={form.deadline}
-                    onChange={(e) => set('deadline', e.target.value)}
-                  />
-                </Field>
-                <Field label="活动时间（选填）">
-                  <input
-                    disabled={ended}
-                    type="datetime-local"
-                    value={form.event_time}
-                    onChange={(e) => set('event_time', e.target.value)}
-                  />
-                </Field>
+                <div id="pf-deadline">
+                  <Field label="招募截止时间 *">
+                    <input
+                      required
+                      disabled={ended && endReason !== 'expired'}
+                      type="datetime-local"
+                      style={markErr('deadline')}
+                      value={form.deadline}
+                      onChange={(e) => set('deadline', e.target.value)}
+                    />
+                  </Field>
+                  {fieldErr('deadline')}
+                </div>
+                <div id="pf-event_time">
+                  <Field label="活动时间（选填）">
+                    <input
+                      disabled={ended}
+                      type="datetime-local"
+                      style={markErr('event_time')}
+                      value={form.event_time}
+                      onChange={(e) => set('event_time', e.target.value)}
+                    />
+                  </Field>
+                  {fieldErr('event_time')}
+                </div>
                 <Field label="活动地点（选填）">
                   <input disabled={ended} value={form.place} onChange={(e) => set('place', e.target.value)} />
                 </Field>
@@ -560,9 +649,18 @@ export function Publish() {
                       ...form.extras, items: form.extras.items!.filter((_, i) => i !== index),
                     })}>移除信息</button>
                   </div>
-                  <Field label="信息标题 *">
-                    <input required maxLength={100} value={item.title} onChange={(e) => setItem(index, { title: e.target.value })} />
-                  </Field>
+                  <div id={`pf-item-${index}-title`}>
+                    <Field label="信息标题 *">
+                      <input
+                        required
+                        maxLength={100}
+                        style={markErr(`item-${index}-title`)}
+                        value={item.title}
+                        onChange={(e) => setItem(index, { title: e.target.value })}
+                      />
+                    </Field>
+                    {fieldErr(`item-${index}-title`)}
+                  </div>
                   <Field label="信息属性 *">
                     <select value={item.type} disabled={uploading || busy} onChange={(e) => setItem(index, {
                       type: e.target.value as InformationItem['type'], content: '', attachment_id: null,
@@ -572,20 +670,23 @@ export function Publish() {
                       <option value="attachment">附件内容</option>
                     </select>
                   </Field>
-                  {item.type === 'text' ? (
-                    <Field label="文字内容 *"><textarea required maxLength={5000} value={item.content} onChange={(e) => setItem(index, { content: e.target.value })} /></Field>
-                  ) : item.type === 'link' ? (
-                    <Field label="网址 *"><input required type="url" placeholder="https://" maxLength={5000} value={item.content} onChange={(e) => setItem(index, { content: e.target.value })} /></Field>
-                  ) : (
-                    <Field label="附件内容 *">
-                      <input type="file" required={!item.attachment_id} accept=".pdf,.docx,.png,.jpg,.jpeg,.txt" disabled={uploading || busy} onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) void uploadFile(file, index);
-                        e.target.value = '';
-                      }} />
-                      {item.attachment_id && <p className="small">已上传：{attachmentNames[item.attachment_id] || `附件 #${item.attachment_id}`}</p>}
-                    </Field>
-                  )}
+                  <div id={`pf-item-${index}-content`}>
+                    {item.type === 'text' ? (
+                      <Field label="文字内容 *"><textarea required maxLength={5000} style={markErr(`item-${index}-content`)} value={item.content} onChange={(e) => setItem(index, { content: e.target.value })} /></Field>
+                    ) : item.type === 'link' ? (
+                      <Field label="网址 *"><input required type="url" placeholder="https://" maxLength={5000} style={markErr(`item-${index}-content`)} value={item.content} onChange={(e) => setItem(index, { content: e.target.value })} /></Field>
+                    ) : (
+                      <Field label="附件内容 *">
+                        <input type="file" required={!item.attachment_id} accept=".pdf,.docx,.png,.jpg,.jpeg,.txt" style={markErr(`item-${index}-content`)} disabled={uploading || busy} onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) void uploadFile(file, index);
+                          e.target.value = '';
+                        }} />
+                        {item.attachment_id && <p className="small">已上传：{attachmentNames[item.attachment_id] || `附件 #${item.attachment_id}`}</p>}
+                      </Field>
+                    )}
+                    {fieldErr(`item-${index}-content`)}
+                  </div>
                 </div>
               ))}
               <button type="button" className="btn secondary" disabled={uploading || busy || (form.extras.items?.length ?? 0) >= 20} onClick={() => set('extras', {
@@ -755,37 +856,6 @@ export function Publish() {
               }}
             >
               {edit ? '确定保存' : '确定发布'}
-            </button>
-          </div>
-        </Modal>
-      )}
-      {confirmTimeMismatch && (
-        <Modal title="请再次确认" onClose={() => setConfirmTimeMismatch(false)}>
-          <p style={{ margin: '12px 0' }}>
-            出现截止时间早于活动开始时间的不合理情况，请再次确认。
-          </p>
-          <p className="small muted">
-            招募截止时间：{date(form.deadline)}，早于活动开始时间：{date(form.event_time)}。确认后仍会按当前填写保存。
-          </p>
-          <div className="actions" style={{ marginTop: 20 }}>
-            <button
-              type="button"
-              className="btn secondary"
-              onClick={() => setConfirmTimeMismatch(false)}
-            >
-              返回修改
-            </button>
-            <button
-              type="button"
-              className="btn"
-              disabled={busy || uploading}
-              onClick={() => {
-                allowTimeMismatch.current = true;
-                setConfirmTimeMismatch(false);
-                formRef.current?.requestSubmit();
-              }}
-            >
-              确认
             </button>
           </div>
         </Modal>

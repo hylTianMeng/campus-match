@@ -132,7 +132,6 @@ def decide(db, app_id, user, action, reason, allow_reapply=True):
             raise HTTPException(422, "请填写原因")
         text = ("撤销录取：" if action == "revoke" else "未通过：") + reason
         if action == "reject" and not allow_reapply:
-            text += "（发布者不允许再次申请）"
             db.execute(
                 "INSERT OR IGNORE INTO application_bans(post_id,user_id,reason,created_at) VALUES(?,?,?,?)",
                 (post["id"], app["user_id"], reason, now()),

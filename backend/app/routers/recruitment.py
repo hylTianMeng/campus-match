@@ -377,11 +377,22 @@ def edit(post_id: int, data: PostEdit, user=Depends(student), db=Depends(get_db)
 
 
 @router.delete("/posts/{post_id}")
-def delete(post_id: int, user=Depends(student), db=Depends(get_db)):
+def delete(post_id: int, force: bool = False, user=Depends(student), db=Depends(get_db)):
     post = require_post(db, post_id)
     require_owner(post, user)
     if db.execute("SELECT 1 FROM applications WHERE post_id=?", (post_id,)).fetchone():
-        raise HTTPException(409, "已有申请历史，不能删除")
+        if not force:
+            raise HTTPException(409, "已有申请历史，不能删除")
+        for row in db.execute(
+            "SELECT DISTINCT user_id FROM applications WHERE post_id=?", (post_id,)
+        ):
+            notify(db, row["user_id"], "发布者已删除该招募，相关申请记录一并移除。", None)
+        db.execute(
+            "DELETE FROM application_events WHERE application_id IN "
+            "(SELECT id FROM applications WHERE post_id=?)",
+            (post_id,),
+        )
+        db.execute("DELETE FROM applications WHERE post_id=?", (post_id,))
     db.execute("DELETE FROM posts WHERE id=?", (post_id,))
     return {"ok": True}
 
@@ -458,7 +469,7 @@ def apply(
         "SELECT 1 FROM application_bans WHERE post_id=? AND user_id=?",
         (post_id, user["id"]),
     ).fetchone():
-        raise HTTPException(403, "发布者不允许你再次申请此招募")
+        raise HTTPException(403, "抱歉，您的再次申请未得到发布者同意")
     if not db.execute(
         "SELECT 1 FROM roles WHERE post_id=?", (post_id,)
     ).fetchone():
@@ -567,13 +578,13 @@ def application_ban(post_id: int, data: ApplicationBan, user=Depends(student), d
             "INSERT INTO application_bans(post_id,user_id,reason,created_at) VALUES(?,?,?,?)",
             (post_id, data.user_id, "发布者不允许再次申请", now()),
         )
-        notify(db, data.user_id, "发布者不允许你再次申请此招募。", post_id)
+        notify(db, data.user_id, "抱歉，您的再次申请未得到发布者同意。", post_id)
     elif not data.banned and banned:
         db.execute(
             "DELETE FROM application_bans WHERE post_id=? AND user_id=?",
             (post_id, data.user_id),
         )
-        notify(db, data.user_id, "发布者已允许你再次申请此招募。", post_id)
+        notify(db, data.user_id, "发布者已同意您再次申请此招募。", post_id)
     return {"ok": True, "banned": bool(data.banned)}
 
 

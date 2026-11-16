@@ -624,7 +624,7 @@ def test_reject_can_ban_reapply(client):
         f"/api/posts/{post['id']}/applications", json={"role_id": role_id}
     )
     assert blocked.status_code == 403
-    assert "不允许" in blocked.json()["detail"]
+    assert "未得到发布者同意" in blocked.json()["detail"]
     login(client, "chen")
     other = new_post(client, (1,))
     login(client, "shen")
@@ -710,6 +710,9 @@ def test_expired_post_reopens_by_extending_deadline(client):
     assert reopened.status_code == 200, reopened.text
     assert reopened.json()["status"] == "open"
     assert reopened.json()["end_reason"] is None
+    login(client, "chen")
+    owner_notices = client.get("/api/notices").json()
+    assert any("已到截止时间" in n["body"] for n in owner_notices)
     login(client, "shen")
     mine = next(
         a for a in client.get("/api/me/applications").json() if a["id"] == app_id
@@ -721,3 +724,27 @@ def test_expired_post_reopens_by_extending_deadline(client):
         f"/api/posts/{post['id']}/applications",
         json={"role_id": post["roles"][0]["id"]},
     ).status_code == 201
+
+
+def test_force_delete_post_with_application_history(client):
+    login(client, "chen")
+    post = new_post(client, (2,))
+    login(client, "shen")
+    app_id = apply(client, post)
+    login(client, "chen")
+    assert (
+        client.delete(f"/api/posts/{post['id']}").status_code == 409
+    )
+    assert client.delete(f"/api/posts/{post['id']}?force=true").status_code == 200
+    assert client.get(f"/api/posts/{post['id']}").status_code == 404
+    with connect() as db:
+        assert (
+            db.execute("SELECT 1 FROM applications WHERE id=?", (app_id,)).fetchone()
+            is None
+        )
+        assert db.execute(
+            "SELECT 1 FROM application_events WHERE application_id=?", (app_id,)
+        ).fetchone() is None
+    login(client, "shen")
+    notices = client.get("/api/notices").json()
+    assert any("已删除该招募" in n["body"] for n in notices)

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useData, write } from '../api';
 import { useSession } from '../context';
@@ -24,6 +24,7 @@ interface Confirmation {
   action?: string;
   reason?: boolean;
   reapply?: boolean;
+  onForce?: () => void;
 }
 function useConfirmation(refresh: () => void) {
   const [dialog, setDialog] = useState<Confirmation>(),
@@ -89,6 +90,18 @@ function useConfirmation(refresh: () => void) {
           </label>
         )}
         <ErrorNote error={error} />
+        {dialog.onForce && error.includes('已有申请历史') && (
+          <button
+            type="button"
+            className="link"
+            onClick={() => {
+              setDialog(undefined);
+              dialog.onForce?.();
+            }}
+          >
+            仍要删除
+          </button>
+        )}
         <div className="actions">
           <button
             type="button"
@@ -107,9 +120,91 @@ function useConfirmation(refresh: () => void) {
   );
   return { ask, modal };
 }
+function ForceDeleteModal({
+  post,
+  onClose,
+  onDeleted,
+}: {
+  post: { id: number; title: string };
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const [progress, setProgress] = useState(0),
+    [error, setError] = useState('');
+  const rafRef = useRef<number | undefined>(undefined);
+  const stop = () => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = undefined;
+    setProgress(0);
+  };
+  useEffect(() => stop, []);
+  const start = () => {
+    setError('');
+    if (rafRef.current) return;
+    const startedAt = Date.now();
+    const tick = () => {
+      const pct = Math.min(100, ((Date.now() - startedAt) / 3000) * 100);
+      setProgress(pct);
+      if (pct >= 100) {
+        rafRef.current = undefined;
+        write('/posts/' + post.id + '?force=true', 'DELETE')
+          .then(onDeleted)
+          .catch((e: Error) => {
+            setError(e.message);
+            setProgress(0);
+          });
+        return;
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+  };
+  return (
+    <Modal title="强制删除招募" onClose={onClose}>
+      <p style={{ margin: '18px 0' }}>
+        “{post.title}”存在申请记录，强制删除会一并移除全部申请与录取记录，且不可恢复。
+      </p>
+      <p className="small muted">请长按下方按钮 3 秒以确定删除。</p>
+      <div style={{ margin: '16px 0' }}>
+        <button
+          type="button"
+          className="btn danger"
+          style={{ width: '100%', position: 'relative', overflow: 'hidden' }}
+          onPointerDown={start}
+          onPointerUp={stop}
+          onPointerLeave={stop}
+          onPointerCancel={stop}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          {progress > 0 && (
+            <span
+              style={{
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: progress + '%',
+                background: 'rgba(173, 60, 82, 0.25)',
+              }}
+            />
+          )}
+          长按 3 秒确认删除
+        </button>
+      </div>
+      <ErrorNote error={error} />
+      <div className="actions">
+        <button type="button" className="btn secondary" onClick={onClose}>
+          取消
+        </button>
+      </div>
+    </Modal>
+  );
+}
 export function Posts() {
   const data = useData<Post[]>('/me/posts'),
-    { ask, modal } = useConfirmation(data.refresh);
+    { ask, modal } = useConfirmation(data.refresh),
+    { toast } = useSession(),
+    [forceDelete, setForceDelete] = useState<{ id: number; title: string }>();
   return (
     <>
       <Header title="管理发布" sub="查看招募进展，管理岗位申请。">
@@ -166,6 +261,7 @@ export function Posts() {
                     description: '仅从未收到申请的招募可以删除，删除后不可恢复。',
                     path: '/posts/' + p.id,
                     method: 'DELETE',
+                    onForce: () => setForceDelete({ id: p.id, title: p.title }),
                   })
                 }
               >
@@ -176,6 +272,17 @@ export function Posts() {
         ))}
       </div>
       {modal}
+      {forceDelete && (
+        <ForceDeleteModal
+          post={forceDelete}
+          onClose={() => setForceDelete(undefined)}
+          onDeleted={() => {
+            setForceDelete(undefined);
+            toast('招募已删除');
+            data.refresh();
+          }}
+        />
+      )}
     </>
   );
 }
