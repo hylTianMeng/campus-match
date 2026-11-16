@@ -216,12 +216,6 @@ def take_down(post_id: int, data: Reason, user=Depends(admin), db=Depends(get_db
     return {"ok": True}
 
 
-@router.post("/admin/posts/{post_id}/restore")
-def restore(post_id: int, data: Reason, user=Depends(admin), db=Depends(get_db)):
-    set_post_restriction(db, user, post_id, False, data.reason)
-    return {"ok": True}
-
-
 @router.get("/admin/actions")
 def moderation_history(
     limit: int = Query(50, ge=1, le=100),
@@ -235,6 +229,7 @@ def moderation_history(
             """SELECT * FROM (
         SELECT id,'user' AS target_type,target_user_id AS target_id,admin_id,action,reason,created_at FROM admin_actions
         UNION ALL SELECT id,'post',post_id,admin_id,action,reason,created_at FROM post_actions
+        UNION ALL SELECT id,'post',post_id,admin_id,action,reason,created_at FROM admin_post_actions
     ) ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?""",
             (limit, offset),
         )

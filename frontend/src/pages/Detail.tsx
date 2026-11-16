@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useData, write } from '../api';
 import { useSession } from '../context';
 import type { Post, Role } from '../types';
-import { Badge, Tags, LoadState, Modal, Field, ErrorNote, SafeLink, date, Avatar } from '../components/ui';
+import { Badge, Tags, LoadState, Modal, Field, ErrorNote, SafeLink, date, Avatar, LoginPromptModal } from '../components/ui';
 const extras = [
   ['contact', '招募者联系方式'],
   ['eventIntro', '赛事 / 活动介绍'],
@@ -24,18 +24,50 @@ export function Detail() {
   const [message, setMessage] = useState(''),
     [experience, setExperience] = useState(''),
     [portfolio, setPortfolio] = useState('');
+  const [loginAsk, setLoginAsk] = useState(false),
+    [favState, setFavState] = useState<boolean | null>(null),
+    [adminReason, setAdminReason] = useState('');
   const post = data.data;
   if (!post) return <LoadState {...data} retry={data.refresh} />;
   const ended = post.status === 'ended',
-    own = user?.id === post.owner_id;
+    own = user?.id === post.owner_id,
+    isFav = favState ?? post.is_favorite,
+    takenDown = !!post.taken_down || post.end_reason === 'taken_down';
   function authAction(action: () => void) {
-    if (!user) navigate('/auth?return=' + encodeURIComponent('/detail/' + id));
+    if (!user) setLoginAsk(true);
     else action();
   }
   async function favorite() {
     setBusy(true);
     try {
-      await write('/posts/' + id + '/favorite', post!.is_favorite ? 'DELETE' : 'PUT');
+      const next = !isFav;
+      await write('/posts/' + id + '/favorite', next ? 'PUT' : 'DELETE');
+      setFavState(next);
+      if (next) toast('可以在个人中心查看收藏记录！', 1000);
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function adminTakedown() {
+    setBusy(true);
+    try {
+      await write(`/admin/posts/${id}/takedown`, 'POST', { reason: adminReason.trim() });
+      setAdminReason('');
+      toast('招募已下架，可在本页撤回下架');
+      data.refresh();
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function adminRestore() {
+    setBusy(true);
+    try {
+      await write(`/admin/posts/${id}/restore`, 'POST');
+      toast('招募的独立下架限制已解除');
       data.refresh();
     } catch (e) {
       toast((e as Error).message);
@@ -56,10 +88,10 @@ export function Detail() {
           <div className="panel">
             <div className="between">
               <Tags values={[post.category, ...post.tags]} />
-              <Badge color={ended ? 'gray' : 'green'}>
-                {ended
+              <Badge color={takenDown ? 'red' : ended ? 'gray' : 'green'}>
+                {takenDown ? '已下架' : ended
                   ? '已结束 · ' +
-                    ({ filled: '已招满', expired: '已截止', manual: '提前结束' }[
+                    ({ filled: '已招满', expired: '已截止', manual: '提前结束', taken_down: '已下架' }[
                       post.end_reason ?? ''
                     ] ?? '')
                   : '招募中'}
@@ -76,10 +108,54 @@ export function Detail() {
               活动安排：{post.event_time ? date(post.event_time) : '时间待定'} /{' '}
               {post.place || '地点待定'}
             </p>
-            {ended && <div className="notice warn">招募已结束，录取结果已锁定。</div>}
+            {ended && (
+              <div className="notice warn">
+                {takenDown ? '该招募已被管理员下架。' : '招募已结束，录取结果已锁定。'}
+              </div>
+            )}
             <h2 style={{ margin: '28px 0 13px' }}>关于这次合作</h2>
             <div className="bodycopy">{post.description}</div>
           </div>
+          {post.roles.length > 0 && (
+            <div className="panel">
+              <h2>招募岗位</h2>
+              {post.roles.map((r) => (
+                <div className="role" key={r.id}>
+                  <div className="between">
+                    <h3>{r.name}</h3>
+                    <Badge>
+                      {r.accepting === false ? '已停止接收申请' : r.accepted >= r.capacity
+                        ? '岗位已满'
+                        : '剩余 ' + (r.capacity - r.accepted) + ' 名'}
+                    </Badge>
+                  </div>
+                  <p>{r.description}</p>
+                  <Tags values={r.tags} />
+                  <div className="progress">
+                    <span style={{ width: `${(r.accepted / r.capacity) * 100}%` }} />
+                  </div>
+                  <div className="between">
+                    <span className="small muted">
+                      已录取 {r.accepted} / {r.capacity} 人
+                    </span>
+                    {!own && (
+                      <button
+                        className="btn"
+                        disabled={ended || post.interaction_paused || r.accepting === false || r.accepted >= r.capacity}
+                        onClick={() => authAction(() => {
+                          setRole(r);
+                          setJoin(true);
+                        })}
+                      >
+                        {ended ? '招募已结束' : '申请此岗位'}
+                      </button>
+                    )}
+                    {own && <span className="small muted">本人招募 · 可在右侧管理申请</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           {(Object.entries(post.extras).some(([key, value]) => key === 'items' ? post.extras.items?.length : Boolean(value)) || post.attachment) && (
             <div className="panel">
               <h2>更多信息</h2>
@@ -173,26 +249,59 @@ export function Detail() {
                 {ended ? '招募已结束' : post.interaction_paused ? '暂不可参与' : '一键参与'}
               </button>
             )}
+            {!own && (
+              <div style={{ marginTop: 12 }}>
+                <button
+                  className="btn secondary"
+                  disabled={busy}
+                  onClick={() => authAction(() => void favorite())}
+                >
+                  {isFav ? '★ 已收藏' : '☆ 收藏招募'}
+                </button>
+              </div>
+            )}
           </div>
+          {user?.is_admin && !own && (
+            <div className="panel">
+              <h3>管理操作</h3>
+              {takenDown ? (
+                <>
+                  <div className="notice warn" style={{ margin: '12px 0' }}>
+                    该招募已被下架，可恢复上架。
+                  </div>
+                  <button className="btn secondary" disabled={busy} onClick={() => void adminRestore()}>
+                    恢复上架
+                  </button>
+                </>
+              ) : post.status === 'open' ? (
+                <>
+                  <Field label="下架理由（必填）">
+                    <textarea
+                      value={adminReason}
+                      maxLength={1000}
+                      onChange={(e) => setAdminReason(e.target.value)}
+                    />
+                  </Field>
+                  <button
+                    className="btn danger"
+                    disabled={busy || !adminReason.trim()}
+                    onClick={() => void adminTakedown()}
+                  >
+                    下架招募
+                  </button>
+                </>
+              ) : (
+                <p className="small muted">仅招募中的招募可以下架。</p>
+              )}
+            </div>
+          )}
           <div className="panel">
             <h3>申请情况</h3>
             <p className="small" style={{ marginTop: 12 }}>
               目前有 {post.pending_count} 人申请中。申请资料仅发布者可查看。
             </p>
           </div>
-          <div className="panel">
-            <h3>把想法留在这里</h3><div className="actions">{!own && <><ReportButton type="post" targetId={post.id}/><BlockButton personId={post.owner_id}/></>}</div>
-            <p className="small" style={{ margin: '12px 0' }}>
-              收藏后可在个人中心回看，已结束招募也会保留。
-            </p>
-            <button
-              className="btn secondary"
-              disabled={busy}
-              onClick={() => authAction(() => void favorite())}
-            >
-              {post.is_favorite ? '★ 已收藏' : '☆ 收藏招募'}
-            </button>
-          </div>
+          {!own && <div className="panel"><h3>安全操作</h3><div className="actions"><ReportButton type="post" targetId={post.id}/><BlockButton personId={post.owner_id}/></div></div>}
           {own && (
             <div className="panel">
               <h3>发布者工具</h3>
@@ -225,7 +334,9 @@ export function Detail() {
             setError('');
           }}
         >
-          {!role ? (
+          {post.roles.length === 0 ? (
+            <div className="notice">该招募未设置岗位（通知 / 问卷类内容），暂不接受申请，可通过私信与发布者沟通。</div>
+          ) : !role ? (
             <>
               <div className="notice">选择一个岗位提交申请；不同岗位可分别申请。</div>
               {post.roles.map((r) => (
@@ -249,7 +360,7 @@ export function Detail() {
                     </span>
                     <button
                       className="btn"
-                      disabled={r.accepting === false || r.accepted >= r.capacity}
+                      disabled={ended || post.interaction_paused || r.accepting === false || r.accepted >= r.capacity}
                       onClick={() => setRole(r)}
                     >
                       申请此岗位
@@ -327,6 +438,11 @@ export function Detail() {
           )}
         </Modal>
       )}
+      <LoginPromptModal
+        open={loginAsk}
+        onClose={() => setLoginAsk(false)}
+        returnTo={'/detail/' + id}
+      />
     </>
   );
 }

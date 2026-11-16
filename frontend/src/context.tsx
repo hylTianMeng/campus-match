@@ -10,7 +10,7 @@ interface Session {
   loading: boolean;
   sessionError: string;
   setUser: (user: User | null) => void;
-  toast: (text: string) => void;
+  toast: (text: string, duration?: number) => void;
   logout: () => Promise<void>;
 }
 const Context = createContext<Session>(null!);
@@ -19,7 +19,24 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [user, updateUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [sessionError, setSessionError] = useState('');
-  const [message, toast] = useState('');
+  const [message, setMessage] = useState('');
+  const [leaving, setLeaving] = useState(false);
+  const fadeTimer = useRef<number | undefined>(undefined);
+  const hideTimer = useRef<number | undefined>(undefined);
+  // toast(text, duration)：duration 后开始渐隐（0.3s 过渡），随后卸载。
+  const toast = (text: string, duration = 4000) => {
+    window.clearTimeout(fadeTimer.current);
+    window.clearTimeout(hideTimer.current);
+    setLeaving(false);
+    setMessage(text);
+    hideTimer.current = window.setTimeout(() => {
+      setLeaving(true);
+      fadeTimer.current = window.setTimeout(() => {
+        setMessage('');
+        setLeaving(false);
+      }, 300);
+    }, duration);
+  };
   // 用 ref 记录最近一次登录身份，用于判断是否真的发生了登录/退出/切换账号，
   // 从而只在身份变化时写版本标记，避免两个标签页互相触发 storage 造成请求循环。
   const userIdRef = useRef<number | null>(null);
@@ -61,11 +78,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
   }, []);
-  useEffect(() => {
-    if (!message) return;
-    const timer = setTimeout(() => toast(''), 4000);
-    return () => clearTimeout(timer);
-  }, [message]);
+  useEffect(
+    () => () => {
+      window.clearTimeout(fadeTimer.current);
+      window.clearTimeout(hideTimer.current);
+    },
+    [],
+  );
   async function logout() {
     await write('/auth/logout');
     setUser(null);
@@ -74,7 +93,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     <Context.Provider value={{ user, loading, sessionError, setUser, toast, logout }}>
       {children}
       {message && (
-        <div id="toast" style={{ display: 'block' }} role="status">
+        <div
+          id="toast"
+          style={{ display: 'block', opacity: leaving ? 0 : 1 }}
+          role="status"
+        >
           {message}
         </div>
       )}

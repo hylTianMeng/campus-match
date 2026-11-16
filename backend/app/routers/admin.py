@@ -1,17 +1,18 @@
 """Administrator endpoints for user management (list / ban / unban)."""
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query
 
 from ..auth import admin
 from ..db import get_db
-from ..schemas import BanUser, UnbanUser
-from ..governance import set_user_ban
+from ..schemas import BanUser, UnbanUser, TakedownPost
+from ..governance import set_user_ban, set_post_restriction
 
 router = APIRouter(prefix="/api/admin", tags=["管理"])
 
 
 def _avatar_url(user):
     return f"/api/users/{user['id']}/avatar" if user["avatar_path"] else None
+
 
 
 @router.get("/users")
@@ -52,4 +53,17 @@ def ban_user(user_id: int, data: BanUser, user=Depends(admin), db=Depends(get_db
 @router.post("/users/{user_id}/unban")
 def unban_user(user_id: int, data: UnbanUser, user=Depends(admin), db=Depends(get_db)):
     set_user_ban(db, user, user_id, False, data.reason)
+    return {"ok": True}
+
+
+@router.post("/posts/{post_id}/takedown")
+def takedown_post(post_id: int, data: TakedownPost, user=Depends(admin), db=Depends(get_db)):
+    # Keep the develop URL while sharing the independent moderation state.
+    set_post_restriction(db, user, post_id, True, data.reason)
+    return {"ok": True}
+
+
+@router.post("/posts/{post_id}/restore")
+def restore_post(post_id: int, data: UnbanUser = Body(default=UnbanUser()), user=Depends(admin), db=Depends(get_db)):
+    set_post_restriction(db, user, post_id, False, data.reason or "管理员恢复招募")
     return {"ok": True}

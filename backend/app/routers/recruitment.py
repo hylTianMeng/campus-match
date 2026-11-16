@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from ..db import get_db, get_db_readonly, now, notify
 from ..auth import optional_user, current_user, student
-from ..schemas import PostCreate, PostEdit, ApplicationCreate, Decision, Draft, AttachmentUpload
+from ..schemas import PostCreate, PostEdit, ApplicationCreate, Decision, ApplicationBan, Draft, AttachmentUpload
 from ..services import require_post, require_owner, require_open, post_view, decide, legacy_attachment, transition
 
 from ..governance import require_visible, require_interaction, blocked
@@ -164,6 +164,7 @@ def posts(
     )
     # 需求变更（待与组长确认）：关闭「公开我的发布」后，该用户的招募从大厅公开列表隐藏；
     # 管理员（is_admin=1）仍能看到全部招募，隐私设置不影响管理员权限。
+    # 已下架（end_reason='taken_down'）的招募从普通用户列表隐藏，管理员仍可见以便撤回下架。
     is_admin = user["is_admin"] if user else 0
     # Rank tag matches before applying pagination; category only filters results.
     relevance = (
@@ -172,12 +173,12 @@ def posts(
         "ELSE 2 END,"
         if q else ""
     )
-    parameters = [is_admin, category, category, tag, tag, q, q]
+    parameters = [is_admin, is_admin, category, category, tag, tag, q, q]
     if q:
         parameters.extend([q, q])
     parameters.extend([limit, offset])
     rows = db.execute(
-        "SELECT p.* FROM posts p JOIN users u ON u.id=p.owner_id WHERE p.status='open' AND p.taken_down=0 AND u.banned=0 AND u.deleted_at IS NULL AND (u.public_posts=1 OR ?=1) AND (?='' OR p.category=?) AND (?='' OR EXISTS (SELECT 1 FROM json_each(p.tags) WHERE lower(value)=lower(?))) AND (?='' OR instr(lower(p.title || p.category || p.description || p.tags),lower(?))>0) ORDER BY "
+        "SELECT p.* FROM posts p JOIN users u ON u.id=p.owner_id WHERE p.status='open' AND u.banned=0 AND u.deleted_at IS NULL AND (u.public_posts=1 OR ?=1) AND (p.taken_down=0 OR ?=1) AND (?='' OR p.category=?) AND (?='' OR EXISTS (SELECT 1 FROM json_each(p.tags) WHERE lower(value)=lower(?))) AND (?='' OR instr(lower(p.title || p.category || p.description || p.tags),lower(?))>0) ORDER BY "
         + relevance + order
         + " LIMIT ? OFFSET ?",
         parameters,
@@ -255,11 +256,26 @@ def edit(post_id: int, data: PostEdit, user=Depends(student), db=Depends(get_db)
     place = data.place if "place" in fields else post["place"]
     tags = data.tags if "tags" in fields else json.loads(post["tags"])
     extras = data.extras if "extras" in fields else json.loads(post["extras"])
+    reopened = False
     if post["status"] == "ended":
-        if (data.title != post["title"] or place != post["place"]
+        reopen = (
+            post["end_reason"] == "expired"
+            and "deadline" in fields
+            and data.deadline is not None
+        )
+        if reopen and (
+            data.title != post["title"] or place != post["place"]
             or tags != json.loads(post["tags"])
-            or any(getattr(data, key) is not None for key in ("category", "deadline", "event_time", "roles"))):
+            or any(getattr(data, key) is not None for key in ("category", "event_time", "roles"))
+        ):
+            raise HTTPException(409, "重新开放仅支持延长截止时间，其他信息在结束状态下不可修改")
+        if not reopen and (
+            data.title != post["title"] or place != post["place"]
+            or tags != json.loads(post["tags"])
+            or any(getattr(data, key) is not None for key in ("category", "deadline", "event_time", "roles"))
+        ):
             raise HTTPException(409, "已结束招募仅可修正说明、联系方式和补充资料")
+        reopened = reopen
     if data.category is not None and not db.execute("SELECT 1 FROM categories WHERE name=?", (data.category,)).fetchone():
         raise HTTPException(422, "请选择系统类别")
     deadline = post["deadline"]
@@ -268,6 +284,8 @@ def edit(post_id: int, data: PostEdit, user=Depends(student), db=Depends(get_db)
             raise HTTPException(422, "截止时间必须包含时区")
         if data.deadline < datetime.fromisoformat(post["deadline"]):
             raise HTTPException(409, "截止时间只允许延长；提前截止请使用结束招募")
+        if data.deadline <= datetime.now(timezone.utc):
+            raise HTTPException(409, "新的截止时间必须晚于当前时间")
         deadline = data.deadline.astimezone(timezone.utc).isoformat()
     if data.roles is not None:
         existing = {row["id"]: row for row in db.execute("SELECT * FROM roles WHERE post_id=?", (post_id,))}
@@ -299,7 +317,10 @@ def edit(post_id: int, data: PostEdit, user=Depends(student), db=Depends(get_db)
                     transition(db, application, "rejected", "岗位名额已满", user["id"])
         for role_id in set(existing) - set(ids):
             db.execute("DELETE FROM roles WHERE id=?", (role_id,))
-        if not db.execute("SELECT 1 FROM roles r WHERE r.post_id=? AND r.capacity>(SELECT count(*) FROM applications a WHERE a.role_id=r.id AND a.status='accepted')", (post_id,)).fetchone():
+        roles_left = db.execute(
+            "SELECT count(*) FROM roles WHERE post_id=?", (post_id,)
+        ).fetchone()[0]
+        if roles_left and not db.execute("SELECT 1 FROM roles r WHERE r.post_id=? AND r.capacity>(SELECT count(*) FROM applications a WHERE a.role_id=r.id AND a.status='accepted')", (post_id,)).fetchone():
             db.execute("UPDATE posts SET status='ended',end_reason='filled' WHERE id=?", (post_id,))
             notify(db, user["id"], "全部岗位已满，招募结束，结果已锁定。", post_id)
     event_time = data.event_time if data.event_time is not None else post["event_time"]
@@ -319,8 +340,11 @@ def edit(post_id: int, data: PostEdit, user=Depends(student), db=Depends(get_db)
         db.execute(
             "UPDATE attachments SET post_id=? WHERE id=?", (post_id, attachment_id)
         )
+    current = db.execute(
+        "SELECT status,end_reason FROM posts WHERE id=?", (post_id,)
+    ).fetchone()
     db.execute(
-        "UPDATE posts SET title=?,description=?,place=?,tags=?,extras=?,updated_at=?,category=?,deadline=?,event_time=? WHERE id=?",
+        "UPDATE posts SET title=?,description=?,place=?,tags=?,extras=?,updated_at=?,category=?,deadline=?,event_time=?,status=?,end_reason=? WHERE id=?",
         (
             data.title,
             data.description,
@@ -331,18 +355,37 @@ def edit(post_id: int, data: PostEdit, user=Depends(student), db=Depends(get_db)
             data.category if data.category is not None else post["category"],
             deadline,
             event_time,
+            "open" if reopened else current["status"],
+            None if reopened else current["end_reason"],
             post_id,
         ),
     )
+    if reopened:
+        for row in db.execute(
+            "SELECT DISTINCT user_id FROM applications WHERE post_id=? AND status='expired'",
+            (post_id,),
+        ):
+            notify(db, row["user_id"], "该招募已延长截止时间并重新开放；你的申请已过期，如有意向请重新提交。", post_id)
     return post_view(db, require_post(db, post_id), user)
 
 
 @router.delete("/posts/{post_id}")
-def delete(post_id: int, user=Depends(student), db=Depends(get_db)):
+def delete(post_id: int, force: bool = False, user=Depends(student), db=Depends(get_db)):
     post = require_post(db, post_id)
     require_owner(post, user)
     if db.execute("SELECT 1 FROM applications WHERE post_id=?", (post_id,)).fetchone():
-        raise HTTPException(409, "已有申请历史，不能删除")
+        if not force:
+            raise HTTPException(409, "已有申请历史，不能删除")
+        for row in db.execute(
+            "SELECT DISTINCT user_id FROM applications WHERE post_id=?", (post_id,)
+        ):
+            notify(db, row["user_id"], "发布者已删除该招募，相关申请记录一并移除。", None)
+        db.execute(
+            "DELETE FROM application_events WHERE application_id IN "
+            "(SELECT id FROM applications WHERE post_id=?)",
+            (post_id,),
+        )
+        db.execute("DELETE FROM applications WHERE post_id=?", (post_id,))
     db.execute("DELETE FROM posts WHERE id=?", (post_id,))
     return {"ok": True}
 
@@ -371,6 +414,23 @@ def copy_draft(post_id: int, user=Depends(student), db=Depends(get_db)):
     draft_id = db.execute("INSERT INTO drafts(user_id,payload,updated_at) VALUES(?,?,?)",
                           (user["id"], json.dumps(payload, ensure_ascii=False), now())).lastrowid
     return {"id": draft_id}
+
+
+@router.post("/drafts/{draft_id}/copy", status_code=201)
+def duplicate_draft(draft_id: int, user=Depends(student), db=Depends(get_db)):
+    row = db.execute(
+        "SELECT * FROM drafts WHERE id=? AND user_id=?", (draft_id, user["id"])
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "草稿不存在")
+    payload = json.loads(row["payload"])
+    title = payload.get("title") or ""
+    payload["title"] = (title + "（副本）") if title.strip() else "未命名招募（副本）"
+    new_id = db.execute(
+        "INSERT INTO drafts(user_id,payload,updated_at) VALUES(?,?,?)",
+        (user["id"], json.dumps(payload, ensure_ascii=False), now()),
+    ).lastrowid
+    return {"id": new_id}
 
 
 @router.post("/posts/{post_id}/end")
@@ -420,6 +480,15 @@ def apply(
         "SELECT banned FROM users WHERE id=?", (post["owner_id"],)
     ).fetchone()[0]:
         raise HTTPException(409, "招募当前不可申请")
+    if db.execute(
+        "SELECT 1 FROM application_bans WHERE post_id=? AND user_id=?",
+        (post_id, user["id"]),
+    ).fetchone():
+        raise HTTPException(403, "抱歉，您的再次申请未得到发布者同意")
+    if not db.execute(
+        "SELECT 1 FROM roles WHERE post_id=?", (post_id,)
+    ).fetchone():
+        raise HTTPException(409, "该招募未设置岗位，无法申请")
     role = db.execute(
         "SELECT * FROM roles WHERE id=? AND post_id=?", (data.role_id, post_id)
     ).fetchone()
@@ -472,6 +541,12 @@ def application_rows(db, where, args):
     return [
         {
             **dict(row),
+            "reapply_banned": bool(
+                db.execute(
+                    "SELECT 1 FROM application_bans WHERE post_id=? AND user_id=?",
+                    (row["post_id"], row["user_id"]),
+                ).fetchone()
+            ),
             "events": [
                 dict(e)
                 for e in db.execute(
@@ -497,8 +572,37 @@ def my_applications(user=Depends(current_user), db=Depends(get_db_readonly)):
 
 @router.post("/applications/{app_id}/decision")
 def decision(app_id: int, data: Decision, user=Depends(student), db=Depends(get_db)):
-    decide(db, app_id, user, data.action, data.reason)
+    decide(db, app_id, user, data.action, data.reason, data.allow_reapply)
     return {"ok": True}
+
+
+@router.put("/posts/{post_id}/application-ban")
+def application_ban(post_id: int, data: ApplicationBan, user=Depends(student), db=Depends(get_db)):
+    post = require_post(db, post_id)
+    require_owner(post, user)
+    require_interaction(db, post)
+    if not db.execute(
+        "SELECT 1 FROM applications WHERE post_id=? AND user_id=?",
+        (post_id, data.user_id),
+    ).fetchone():
+        raise HTTPException(404, "该用户没有此招募的申请记录")
+    banned = db.execute(
+        "SELECT 1 FROM application_bans WHERE post_id=? AND user_id=?",
+        (post_id, data.user_id),
+    ).fetchone()
+    if data.banned and not banned:
+        db.execute(
+            "INSERT INTO application_bans(post_id,user_id,reason,created_at) VALUES(?,?,?,?)",
+            (post_id, data.user_id, "发布者不允许再次申请", now()),
+        )
+        notify(db, data.user_id, "抱歉，您的再次申请未得到发布者同意。", post_id)
+    elif not data.banned and banned:
+        db.execute(
+            "DELETE FROM application_bans WHERE post_id=? AND user_id=?",
+            (post_id, data.user_id),
+        )
+        notify(db, data.user_id, "发布者已同意您再次申请此招募。", post_id)
+    return {"ok": True, "banned": bool(data.banned)}
 
 
 @router.get("/me/favorites")

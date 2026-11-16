@@ -89,6 +89,10 @@ def init_db():
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS message_request_key ON messages(sender_id,client_id) WHERE client_id IS NOT NULL")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS notice_event_key ON notices(user_id,event_key) WHERE event_key IS NOT NULL")
             db.executescript((Path(__file__).parent / "governance.sql").read_text())
+            # Normalize the earlier develop representation without discarding applications.
+            post_columns = {row["name"] for row in db.execute("PRAGMA table_info(posts)")}
+            if {"status", "end_reason"} <= post_columns:
+                db.execute("UPDATE posts SET taken_down=1,status='open',end_reason=NULL WHERE end_reason='taken_down'")
         finally:
             db.close()
 
@@ -164,7 +168,7 @@ def notify(db, user_id, text, post_id=None, *, event_key=None, kind="business", 
 
 def expire_posts(db):
     for post in db.execute(
-        "SELECT id FROM posts WHERE status='open' AND deadline<=?", (now(),)
+        "SELECT id,owner_id,title FROM posts WHERE status='open' AND deadline<=?", (now(),)
     ).fetchall():
         for app in db.execute(
             "SELECT id,user_id FROM applications WHERE post_id=? AND status='pending'",
@@ -182,4 +186,10 @@ def expire_posts(db):
         db.execute(
             "UPDATE posts SET status='ended',end_reason='expired' WHERE id=?",
             (post["id"],),
+        )
+        notify(
+            db,
+            post["owner_id"],
+            f"招募「{post['title']}」已到截止时间，自动结束；可延长截止时间重新开放。",
+            post["id"],
         )

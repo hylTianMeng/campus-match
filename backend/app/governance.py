@@ -92,7 +92,7 @@ def set_post_restriction(db, actor, post_id, taken_down, reason, *, from_report=
         (actor["id"], post_id, action, reason, now()),
     ).lastrowid
     text = (
-        "招募已下架，申请和审核暂停。"
+        f"您的「{post['title']}」招募已被下架，申请和审核暂停。"
         if taken_down
         else "招募的独立下架限制已解除，其他账号限制仍适用。"
     )

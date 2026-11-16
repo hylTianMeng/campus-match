@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useData, write } from '../api';
 import { useSession } from '../context';
@@ -23,16 +23,20 @@ interface Confirmation {
   method?: string;
   action?: string;
   reason?: boolean;
+  reapply?: boolean;
+  onForce?: () => void;
 }
 function useConfirmation(refresh: () => void) {
   const [dialog, setDialog] = useState<Confirmation>(),
     [reason, setReason] = useState(''),
+    [allowReapply, setAllowReapply] = useState(true),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const { toast } = useSession();
   const ask = (next: Confirmation) => {
     setReason('');
     setError('');
+    setAllowReapply(true);
     setDialog(next);
   };
   const modal = dialog && (
@@ -52,7 +56,13 @@ function useConfirmation(refresh: () => void) {
             await write(
               dialog.path,
               dialog.method ?? 'POST',
-              dialog.action ? { action: dialog.action, reason } : {},
+              dialog.action
+                ? {
+                    action: dialog.action,
+                    reason,
+                    ...(dialog.reapply ? { allow_reapply: allowReapply } : {}),
+                  }
+                : {},
             );
             setDialog(undefined);
             toast('操作已完成');
@@ -69,8 +79,30 @@ function useConfirmation(refresh: () => void) {
             <textarea required value={reason} onChange={(e) => setReason(e.target.value)} />
           </Field>
         )}
+        {dialog.reapply && (
+          <label className="small" style={{ display: 'block', marginTop: 6 }}>
+            <input
+              type="checkbox"
+              checked={allowReapply}
+              onChange={(e) => setAllowReapply(e.target.checked)}
+            />{' '}
+            允许该用户再次申请
+          </label>
+        )}
         <ErrorNote error={error} />
         <div className="actions">
+          {dialog.onForce && error.includes('已有申请历史') && (
+            <button
+              type="button"
+              className="link"
+              onClick={() => {
+                setDialog(undefined);
+                dialog.onForce?.();
+              }}
+            >
+              仍要删除
+            </button>
+          )}
           <button
             type="button"
             className="btn secondary"
@@ -88,9 +120,91 @@ function useConfirmation(refresh: () => void) {
   );
   return { ask, modal };
 }
+function ForceDeleteModal({
+  post,
+  onClose,
+  onDeleted,
+}: {
+  post: { id: number; title: string };
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const [progress, setProgress] = useState(0),
+    [error, setError] = useState('');
+  const rafRef = useRef<number | undefined>(undefined);
+  const stop = () => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = undefined;
+    setProgress(0);
+  };
+  useEffect(() => stop, []);
+  const start = () => {
+    setError('');
+    if (rafRef.current) return;
+    const startedAt = Date.now();
+    const tick = () => {
+      const pct = Math.min(100, ((Date.now() - startedAt) / 3000) * 100);
+      setProgress(pct);
+      if (pct >= 100) {
+        rafRef.current = undefined;
+        write('/posts/' + post.id + '?force=true', 'DELETE')
+          .then(onDeleted)
+          .catch((e: Error) => {
+            setError(e.message);
+            setProgress(0);
+          });
+        return;
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+  };
+  return (
+    <Modal title="强制删除招募" onClose={onClose}>
+      <p style={{ margin: '18px 0' }}>
+        “{post.title}”存在申请记录，强制删除会一并移除全部申请与录取记录，且不可恢复。
+      </p>
+      <p className="small muted">请长按下方按钮 3 秒以确定删除。</p>
+      <div style={{ margin: '16px 0' }}>
+        <button
+          type="button"
+          className="btn danger"
+          style={{ width: '100%', position: 'relative', overflow: 'hidden' }}
+          onPointerDown={start}
+          onPointerUp={stop}
+          onPointerLeave={stop}
+          onPointerCancel={stop}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          {progress > 0 && (
+            <span
+              style={{
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: progress + '%',
+                background: 'rgba(173, 60, 82, 0.25)',
+              }}
+            />
+          )}
+          长按 3 秒确认删除
+        </button>
+      </div>
+      <ErrorNote error={error} />
+      <div className="actions">
+        <button type="button" className="btn secondary" onClick={onClose}>
+          取消
+        </button>
+      </div>
+    </Modal>
+  );
+}
 export function Posts() {
   const data = useData<Post[]>('/me/posts'),
-    { ask, modal } = useConfirmation(data.refresh);
+    { ask, modal } = useConfirmation(data.refresh),
+    { toast } = useSession(),
+    [forceDelete, setForceDelete] = useState<{ id: number; title: string }>();
   return (
     <>
       <Header title="管理发布" sub="查看招募进展，管理岗位申请。">
@@ -111,7 +225,13 @@ export function Posts() {
                 <Link to={'/detail/' + p.id}>{p.title}</Link>
               </h3>
               <p>
-                {p.category} · {p.status === 'open' ? '招募中' : '已结束'} · {p.pending_count}{' '}
+                {p.category} ·{' '}
+                {p.status === 'open'
+                  ? '招募中'
+                  : p.end_reason === 'taken_down'
+                    ? '已下架'
+                    : '已结束'}{' '}
+                · {p.pending_count}{' '}
                 人待审核 · 更新于 {date(p.updated_at)}
               </p>
             </div>
@@ -147,6 +267,7 @@ export function Posts() {
                     description: '仅从未收到申请的招募可以删除，删除后不可恢复。',
                     path: '/posts/' + p.id,
                     method: 'DELETE',
+                    onForce: () => setForceDelete({ id: p.id, title: p.title }),
                   })
                 }
               >
@@ -157,12 +278,33 @@ export function Posts() {
         ))}
       </div>
       {modal}
+      {forceDelete && (
+        <ForceDeleteModal
+          post={forceDelete}
+          onClose={() => setForceDelete(undefined)}
+          onDeleted={() => {
+            setForceDelete(undefined);
+            toast('招募已删除');
+            data.refresh();
+          }}
+        />
+      )}
     </>
   );
 }
 export function Drafts() {
   const data = useData<Draft[]>('/drafts'),
-    { ask, modal } = useConfirmation(data.refresh);
+    { ask, modal } = useConfirmation(data.refresh),
+    { toast } = useSession();
+  const copyDraft = async (d: Draft) => {
+    try {
+      await write('/drafts/' + d.id + '/copy', 'POST');
+      toast('已复制草稿');
+      data.refresh();
+    } catch (e) {
+      toast((e as Error).message);
+    }
+  };
   return (
     <>
       <Header title="草稿箱" sub="缺项也可以保存。填写时自动保存，也可以手动保存。">
@@ -191,6 +333,9 @@ export function Drafts() {
               <Link className="btn secondary" to={'/publish?draft=' + d.id}>
                 继续编辑
               </Link>
+              <button className="btn secondary" onClick={() => void copyDraft(d)}>
+                复制
+              </button>
               <button
                 className="btn danger"
                 onClick={() =>
@@ -217,15 +362,37 @@ export function Applications({ team = false }: { team?: boolean }) {
     owner = Boolean(id),
     data = useData<Application[]>(owner ? '/posts/' + id + '/applications' : '/me/applications');
   const { ask, modal } = useConfirmation(data.refresh),
+    [banError, setBanError] = useState(''),
     rows = data.data?.filter((a) => !team || a.status === 'accepted');
-  const decide = (a: Application, action: string, title: string, reason = false) =>
+  const { toast } = useSession();
+  const decide = (
+    a: Application,
+    action: string,
+    title: string,
+    reason = false,
+    reapply = false,
+  ) =>
     ask({
       title,
       description: `${a.applicant_name} · ${a.title} · ${a.role_name}。操作以服务器最新状态为准。`,
       path: '/applications/' + a.id + '/decision',
       action,
       reason,
+      reapply,
     });
+  const toggleBan = async (a: Application) => {
+    setBanError('');
+    try {
+      await write('/posts/' + a.post_id + '/application-ban', 'PUT', {
+        user_id: a.user_id,
+        banned: !a.reapply_banned,
+      });
+      toast(a.reapply_banned ? '已允许该用户再次申请' : '已禁止该用户再次申请');
+      data.refresh();
+    } catch (e) {
+      setBanError((e as Error).message);
+    }
+  };
   return (
     <>
       <Header
@@ -259,14 +426,32 @@ export function Applications({ team = false }: { team?: boolean }) {
             </div>
             <Badge color={a.status === 'accepted' ? 'green' : ''}>{statusLabel[a.status]}</Badge>
           </div>
-          {a.message && (
-            <p className="bodycopy" style={{ marginTop: 12 }}>
-              留言：{a.message}
-            </p>
+          <p className="bodycopy" style={{ marginTop: 12 }}>
+            留言：{a.message || '无'}
+          </p>
+          <p className="bodycopy">相关经历：{a.experience || '无'}</p>
+          {a.portfolio ? (
+            <SafeLink url={a.portfolio}>简历 / 作品</SafeLink>
+          ) : (
+            <p className="bodycopy">简历 / 作品：无</p>
           )}
-          {a.experience && <p className="bodycopy">相关经历：{a.experience}</p>}
-          <SafeLink url={a.portfolio}>简历 / 作品</SafeLink>
           {a.reason && <p className="small muted">{a.reason}</p>}
+          {owner && a.status === 'withdrawn' && (
+            <div className="actions" style={{ marginTop: 12 }}>
+              <button
+                className={a.reapply_banned ? 'btn' : 'btn secondary'}
+                onClick={() => toggleBan(a)}
+              >
+                {a.reapply_banned ? '允许再次申请' : '禁止再次申请'}
+              </button>
+              <span className="small muted">
+                {a.reapply_banned
+                  ? '该用户目前不能申请此招募'
+                  : '该用户目前可以再次申请此招募'}
+              </span>
+            </div>
+          )}
+          <ErrorNote error={banError} />
           <details style={{ marginTop: 12 }}>
             <summary>查看操作历史</summary>
             <div className="timeline">
@@ -288,7 +473,7 @@ export function Applications({ team = false }: { team?: boolean }) {
                       </button>
                       <button
                         className="btn secondary"
-                        onClick={() => decide(a, 'reject', '拒绝申请', true)}
+                        onClick={() => decide(a, 'reject', '拒绝申请', true, true)}
                       >
                         拒绝
                       </button>

@@ -933,6 +933,7 @@ dialog .actions {
   z-index: 100;
   max-width: 90vw;
   box-shadow: 0 5px 20px #35133e20;
+  transition: opacity 0.3s ease;
 }
 .switchrow {
   display: flex;

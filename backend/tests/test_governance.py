@@ -543,3 +543,24 @@ def test_stale_identity_is_rechecked_after_moderation(client):
         )
     finally:
         app.dependency_overrides.clear()
+
+
+def test_legacy_takedown_state_migrates_to_independent_restriction(client):
+    login(client, 'chen')
+    post = new_post(client)
+    login(client, 'shen')
+    app_id = apply(client, post)
+    with connect() as db:
+        db.execute("UPDATE posts SET status='ended',end_reason='taken_down',taken_down=0 WHERE id=?", (post['id'],))
+        db.execute("INSERT INTO admin_post_actions(admin_id,post_id,action,reason,created_at) VALUES(1,?,'takedown','历史下架',?)", (post['id'], now()))
+    init_db()
+    assert client.get(f"/api/posts/{post['id']}").status_code == 404
+    login(client)
+    state = client.get(f"/api/posts/{post['id']}").json()
+    assert state['status'] == 'open' and state['taken_down'] == 1
+    assert any(row['reason'] == '历史下架' for row in client.get('/api/admin/actions').json())
+    assert client.post(f"/api/admin/posts/{post['id']}/restore",json={}).status_code == 200
+    login(client,'shen')
+    own = {a['id']:a for a in client.get('/api/me/applications').json()}
+    assert own[app_id]['status'] == 'pending'
+    assert client.get(f"/api/posts/{post['id']}").status_code == 200

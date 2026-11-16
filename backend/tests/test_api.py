@@ -565,3 +565,264 @@ def test_banned_unverified_and_safe_links(client):
         },
     )
     assert response.status_code == 422
+
+
+def test_post_without_roles_can_be_published_edited_and_rejected(client):
+    login(client, "chen")
+    post = client.post(
+        "/api/posts",
+        json={
+            "title": "无岗位招募",
+            "category": "课程项目",
+            "description": "先收集意向，稍后补充岗位",
+            "deadline": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat(),
+            "roles": [],
+        },
+    )
+    assert post.status_code == 201, post.text
+    post_id = post.json()["id"]
+    assert post.json()["roles"] == []
+    assert post.json()["status"] == "open"
+    login(client, "shen")
+    apply = client.post(f"/api/posts/{post_id}/applications", json={"role_id": 1})
+    assert apply.status_code == 409
+    assert "未设置岗位" in apply.json()["detail"]
+    login(client, "chen")
+    edited = client.patch(
+        f"/api/posts/{post_id}",
+        json={"title": "无岗位招募", "description": "先收集意向", "roles": []},
+    )
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["status"] == "open"
+    added = client.patch(
+        f"/api/posts/{post_id}",
+        json={
+            "title": "无岗位招募",
+            "description": "先收集意向",
+            "roles": [{"name": "成员", "capacity": 1}],
+        },
+    )
+    assert added.status_code == 200, added.text
+    assert added.json()["roles"][0]["name"] == "成员"
+    assert added.json()["status"] == "open"
+
+
+def test_reject_can_ban_reapply(client):
+    login(client, "chen")
+    post = new_post(client, (2,))
+    role_id = post["roles"][0]["id"]
+    login(client, "shen")
+    app_id = apply(client, post)
+    login(client, "chen")
+    banned = client.post(
+        f"/api/applications/{app_id}/decision",
+        json={"action": "reject", "reason": "不合适", "allow_reapply": False},
+    )
+    assert banned.status_code == 200, banned.text
+    login(client, "shen")
+    blocked = client.post(
+        f"/api/posts/{post['id']}/applications", json={"role_id": role_id}
+    )
+    assert blocked.status_code == 403
+    assert "未得到发布者同意" in blocked.json()["detail"]
+    login(client, "chen")
+    other = new_post(client, (1,))
+    login(client, "shen")
+    other_app = apply(client, other)
+    login(client, "chen")
+    assert decision(client, other_app, "reject").status_code == 200
+    login(client, "shen")
+    assert client.post(
+        f"/api/posts/{other['id']}/applications",
+        json={"role_id": other["roles"][0]["id"], "message": "再次尝试"},
+    ).status_code == 201
+
+
+def test_withdraw_ban_toggle_flow(client):
+    login(client, "chen")
+    post = new_post(client, (2,))
+    login(client, "shen")
+    app_id = apply(client, post)
+    assert decision(client, app_id, "withdraw").status_code == 200
+    login(client, "chen")
+    apps = client.get(f"/api/posts/{post['id']}/applications").json()
+    target = next(a for a in apps if a["id"] == app_id)
+    assert target["status"] == "withdrawn"
+    assert target["reapply_banned"] is False
+    notices = client.get("/api/notices").json()
+    assert any("撤回了申请" in n["body"] and target["applicant_name"] in n["body"] for n in notices)
+    assert client.put(
+        f"/api/posts/{post['id']}/application-ban",
+        json={"user_id": target["user_id"], "banned": True},
+    ).status_code == 200
+    login(client, "shen")
+    assert client.post(
+        f"/api/posts/{post['id']}/applications",
+        json={"role_id": post["roles"][0]["id"]},
+    ).status_code == 403
+    assert client.put(
+        f"/api/posts/{post['id']}/application-ban",
+        json={"user_id": target["user_id"], "banned": False},
+    ).status_code == 403
+    login(client, "chen")
+    assert client.put(
+        f"/api/posts/{post['id']}/application-ban",
+        json={"user_id": target["user_id"], "banned": False},
+    ).status_code == 200
+    login(client, "shen")
+    assert client.post(
+        f"/api/posts/{post['id']}/applications",
+        json={"role_id": post["roles"][0]["id"]},
+    ).status_code == 201
+
+
+def test_expired_post_reopens_by_extending_deadline(client):
+    login(client, "chen")
+    post = new_post(client, (2,))
+    login(client, "shen")
+    app_id = apply(client, post)
+    with connect() as db:
+        db.execute(
+            "UPDATE posts SET deadline=? WHERE id=?",
+            (
+                (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
+                post["id"],
+            ),
+        )
+    assert client.get(f"/api/posts/{post['id']}").json()["end_reason"] == "expired"
+    login(client, "chen")
+    future = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+    ended = new_post(client, (1,))
+    assert client.post(f"/api/posts/{ended['id']}/end", json={}).status_code == 200
+    assert client.patch(
+        f"/api/posts/{ended['id']}",
+        json={"title": ended["title"], "description": ended["description"], "deadline": future},
+    ).status_code == 409
+    past = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    assert client.patch(
+        f"/api/posts/{post['id']}",
+        json={"title": post["title"], "description": post["description"], "deadline": past},
+    ).status_code == 409
+    reopened = client.patch(
+        f"/api/posts/{post['id']}",
+        json={"title": post["title"], "description": post["description"], "deadline": future},
+    )
+    assert reopened.status_code == 200, reopened.text
+    assert reopened.json()["status"] == "open"
+    assert reopened.json()["end_reason"] is None
+    login(client, "chen")
+    owner_notices = client.get("/api/notices").json()
+    assert any("已到截止时间" in n["body"] for n in owner_notices)
+    login(client, "shen")
+    mine = next(
+        a for a in client.get("/api/me/applications").json() if a["id"] == app_id
+    )
+    assert mine["status"] == "expired"
+    notices = client.get("/api/notices").json()
+    assert any("重新开放" in n["body"] for n in notices)
+    assert client.post(
+        f"/api/posts/{post['id']}/applications",
+        json={"role_id": post["roles"][0]["id"]},
+    ).status_code == 201
+
+
+def test_force_delete_post_with_application_history(client):
+    login(client, "chen")
+    post = new_post(client, (2,))
+    login(client, "shen")
+    app_id = apply(client, post)
+    login(client, "chen")
+    assert (
+        client.delete(f"/api/posts/{post['id']}").status_code == 409
+    )
+    assert client.delete(f"/api/posts/{post['id']}?force=true").status_code == 200
+    assert client.get(f"/api/posts/{post['id']}").status_code == 404
+    with connect() as db:
+        assert (
+            db.execute("SELECT 1 FROM applications WHERE id=?", (app_id,)).fetchone()
+            is None
+        )
+        assert db.execute(
+            "SELECT 1 FROM application_events WHERE application_id=?", (app_id,)
+        ).fetchone() is None
+    login(client, "shen")
+    notices = client.get("/api/notices").json()
+    assert any("已删除该招募" in n["body"] for n in notices)
+
+
+def test_admin_can_takedown_and_restore_post(client):
+    login(client, "chen")
+    post = new_post(client, (2,))
+    login(client, "shen")
+    app_id = apply(client, post)
+    # 普通管理员（lin）下架，需填写理由
+    login(client, "lin")
+    assert (
+        client.post(f"/api/admin/posts/{post['id']}/takedown", json={}).status_code == 422
+    )
+    assert (
+        client.post(
+            f"/api/admin/posts/{post['id']}/takedown",
+            json={"reason": "内容不符合社区规范"},
+        ).status_code == 200
+    )
+    # 发布者收到带招募名与理由的通知；申请者收到下架不可见效果
+    login(client, "chen")
+    notices = client.get("/api/notices").json()
+    assert any(
+        f"您的「{post['title']}」招募已被下架" in n["body"]
+        and "内容不符合社区规范" in n["body"]
+        for n in notices
+    )
+    # 大厅列表不再展示该招募（普通用户）
+    login(client, "shen")
+    ids = [p["id"] for p in client.get("/api/posts").json()]
+    assert post["id"] not in ids
+    # 管理员大厅列表仍可见已下架招募（带已下架标记），以便撤回下架
+    login(client, "lin")
+    admin_list = {p["id"]: p for p in client.get("/api/posts").json()}
+    assert admin_list[post["id"]]["taken_down"] == 1
+    assert admin_list[post["id"]]["status"] == "open"
+    # 普通用户访问详情 404；发布者与管理员仍可见
+    login(client, "shen")
+    assert client.get(f"/api/posts/{post['id']}").status_code == 404
+    login(client, "chen")
+    assert client.get(f"/api/posts/{post['id']}").json()["taken_down"] == 1
+    login(client, "lin")
+    assert client.get(f"/api/posts/{post['id']}").status_code == 200
+    # 重复恢复或下架保持幂等，不重新产生状态变更
+    other = new_post(client, (1,))
+    assert client.post(f"/api/admin/posts/{other['id']}/restore", json={}).status_code == 200
+    assert (
+        client.post(
+            f"/api/admin/posts/{post['id']}/takedown", json={"reason": "重复下架"}
+        ).status_code == 200
+    )
+    # 恢复上架后重新可见，发布者收到通知，申请记录保留
+    assert client.post(f"/api/admin/posts/{post['id']}/restore", json={}).status_code == 200
+    login(client, "chen")
+    notices = client.get("/api/notices").json()
+    assert any("独立下架限制已解除" in n["body"] for n in notices)
+    login(client, "shen")
+    assert client.get(f"/api/posts/{post['id']}").status_code == 200
+    mine = [a for a in client.get("/api/me/applications").json() if a["id"] == app_id]
+    assert mine and mine[0]["status"] == "pending"
+
+
+def test_draft_copy_duplicates_payload_with_suffix(client):
+    login(client, "chen")
+    post = new_post(client, (2,))
+    login(client, "chen")
+    draft = client.post(f"/api/posts/{post['id']}/copy-draft", json={}).json()
+    listed = client.get("/api/drafts").json()
+    original = next(d for d in listed if d["id"] == draft["id"])
+    copied = client.post(f"/api/drafts/{draft['id']}/copy", json={})
+    assert copied.status_code == 201, copied.text
+    listed = client.get("/api/drafts").json()
+    replica = next(d for d in listed if d["id"] == copied.json()["id"])
+    assert replica["payload"]["title"] == original["payload"]["title"] + "（副本）"
+    assert replica["payload"]["description"] == original["payload"]["description"]
+    assert replica["payload"]["roles"] == original["payload"]["roles"]
+    # 不能复制他人的草稿
+    login(client, "shen")
+    assert client.post(f"/api/drafts/{draft['id']}/copy", json={}).status_code == 404

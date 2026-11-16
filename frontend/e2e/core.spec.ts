@@ -20,6 +20,8 @@ test('public discovery, search, mobile navigation and no overflow', async ({ pag
   await page.getByRole('link', { name: '查看招募 ↗' }).click();
   await expect(page.getByRole('heading', { name: '关于这次合作' })).toBeVisible();
   await page.getByRole('button', { name: '一键参与', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '需要登录' })).toBeVisible();
+  await page.getByRole('link', { name: '前往登录', exact: true }).click();
   await expect(page.getByRole('heading', { name: '欢迎回到 TsingMate' })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/#/discover');
@@ -81,7 +83,7 @@ test('real draft → publish → apply → owner approval → notification', asy
   await applicant.getByRole('button', { name: '☆ 收藏招募' }).click();
   await expect(applicant.getByRole('button', { name: '★ 已收藏' })).toBeVisible();
   await applicant.getByRole('button', { name: '一键参与', exact: true }).click();
-  await applicant.getByRole('button', { name: '申请此岗位' }).click();
+  await applicant.getByRole('dialog').getByRole('button', { name: '申请此岗位', exact: true }).click();
   await applicant.getByLabel('申请留言（选填）').fill('我有 React 项目经验。');
   await applicant.getByLabel('简历 / 作品链接（选填）').fill('https://example.com/portfolio');
   await applicant.getByRole('button', { name: '提交申请' }).click();
@@ -90,11 +92,11 @@ test('real draft → publish → apply → owner approval → notification', asy
   await expect(owner.getByText('留言：我有 React 项目经验。', { exact: true })).toBeVisible();
   await owner.getByRole('button', { name: '通过', exact: true }).click();
   await owner.getByRole('button', { name: '确认通过申请' }).click();
-  await expect(owner.getByText('已通过', { exact: true })).toBeVisible();
+  await expect(owner.locator('.panel').filter({ has: owner.getByRole('link', { name: title, exact: true }) }).getByText('已通过', { exact: true })).toBeVisible();
   await applicant.goto('/#/applications');
   await expect(applicant.locator('.panel').filter({ has: applicant.getByRole('link', { name: title, exact: true }) }).getByText('已通过', { exact: true })).toBeVisible();
   await applicant.goto(detail);
-  await expect(applicant.getByRole('button', { name: '招募已结束', exact: true })).toBeDisabled();
+  await expect(applicant.getByRole('button', { name: '招募已结束', exact: true }).last()).toBeDisabled();
   await applicant.goto('/#/notices');
   await expect(applicant.getByRole('heading', { name: /申请已通过/ })).toBeVisible();
   await ownerContext.close();

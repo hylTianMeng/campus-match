@@ -83,6 +83,7 @@ export interface Application {
   experience: string;
   portfolio: string;
   reason: string;
+  reapply_banned: boolean;
   created_at: string;
   events: { status: string; reason: string; created_at: string }[];
 }

@@ -40,6 +40,13 @@ CREATE TABLE IF NOT EXISTS applications(
 CREATE UNIQUE INDEX IF NOT EXISTS one_pending_role ON applications(role_id,user_id) WHERE status='pending';
 CREATE UNIQUE INDEX IF NOT EXISTS one_accepted_post ON applications(post_id,user_id) WHERE status='accepted';
 CREATE INDEX IF NOT EXISTS post_applications ON applications(post_id,status);
+CREATE TABLE IF NOT EXISTS application_bans(
+ id INTEGER PRIMARY KEY, post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+ user_id INTEGER NOT NULL REFERENCES users(id),
+ reason TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+ UNIQUE(post_id,user_id)
+);
+CREATE INDEX IF NOT EXISTS application_bans_user ON application_bans(user_id);
 CREATE TABLE IF NOT EXISTS application_events(
  id INTEGER PRIMARY KEY, application_id INTEGER NOT NULL REFERENCES applications(id),
  actor_id INTEGER REFERENCES users(id), status TEXT NOT NULL, reason TEXT NOT NULL, created_at TEXT NOT NULL
@@ -87,6 +94,15 @@ CREATE TABLE IF NOT EXISTS admin_actions(
  admin_id INTEGER NOT NULL REFERENCES users(id),
  target_user_id INTEGER NOT NULL REFERENCES users(id),
  action TEXT NOT NULL CHECK(action IN ('ban','unban')),
+ reason TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS admin_post_actions(
+ id INTEGER PRIMARY KEY,
+ admin_id INTEGER NOT NULL REFERENCES users(id),
+ post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+ action TEXT NOT NULL CHECK(action IN ('takedown','restore')),
  reason TEXT NOT NULL DEFAULT '',
  created_at TEXT NOT NULL
 );
