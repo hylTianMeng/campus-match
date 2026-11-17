@@ -13,10 +13,12 @@ router = APIRouter(prefix="/api", tags=["消息与治理"])
 
 @router.get("/blocks")
 def block_list(user=Depends(current_user), db=Depends(get_db_readonly)):
+    if user["is_admin"]:
+        return []
     return [
         public_user(row)
         for row in db.execute(
-            "SELECT u.* FROM blocks b JOIN users u ON u.id=b.blocked_id WHERE b.blocker_id=? ORDER BY b.created_at DESC",
+            "SELECT u.* FROM blocks b JOIN users u ON u.id=b.blocked_id WHERE b.blocker_id=? AND u.is_admin=0 ORDER BY b.created_at DESC",
             (user["id"],),
         )
     ]
@@ -24,12 +26,17 @@ def block_list(user=Depends(current_user), db=Depends(get_db_readonly)):
 
 @router.put("/blocks/{person_id}")
 def block_person(person_id: int, user=Depends(student), db=Depends(get_db)):
+    if user["is_admin"]:
+        raise HTTPException(403, "管理员不能拉黑用户")
     if person_id == user["id"]:
         raise HTTPException(422, "不能拉黑自己")
-    if not db.execute(
-        "SELECT 1 FROM users WHERE id=? AND deleted_at IS NULL", (person_id,)
-    ).fetchone():
+    target = db.execute(
+        "SELECT is_admin FROM users WHERE id=? AND deleted_at IS NULL", (person_id,)
+    ).fetchone()
+    if not target:
         raise HTTPException(404, "用户不存在")
+    if target["is_admin"]:
+        raise HTTPException(403, "不能拉黑管理员")
     created = db.execute(
         "INSERT OR IGNORE INTO blocks VALUES(?,?,?)", (user["id"], person_id, now())
     ).rowcount

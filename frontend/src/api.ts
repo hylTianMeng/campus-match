@@ -54,18 +54,21 @@ export async function removeAvatar(): Promise<User> {
   if (!response.ok) throw toApiError(response, data);
   return data as User;
 }
-export function useData<T>(path: string | null, poll = 0) {
+export function useData<T>(path: string | null, poll = 0, preserveDataOnRefresh = false) {
   const [data, setData] = useState<T>();
   const [error, setError] = useState<Error>();
   const [loading, setLoading] = useState(true);
   const [version, setVersion] = useState(0);
   const generation = useRef(0);
+  const previousPath = useRef<string | null | undefined>(undefined);
   const refresh = useCallback(() => setVersion((v) => v + 1), []);
   useEffect(() => {
     const current = ++generation.current;
-    setData(undefined);
+    const resetData = !preserveDataOnRefresh || previousPath.current !== path;
+    previousPath.current = path;
+    if (resetData) setData(undefined);
     setError(undefined);
-    setLoading(Boolean(path));
+    setLoading(Boolean(path) && resetData);
     if (!path) return;
     let inFlight = false;
     async function load() {
@@ -90,7 +93,7 @@ export function useData<T>(path: string | null, poll = 0) {
       generation.current++;
       clearInterval(timer);
     };
-  }, [path, poll, version]);
+  }, [path, poll, version, preserveDataOnRefresh]);
   return { data, error, loading, refresh };
 }
 

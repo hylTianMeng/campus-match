@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from ..db import get_db, get_db_readonly, now
 from ..auth import current_user, student, public_user
 from ..schemas import Message
 from ..services import post_view
-from ..governance import blocked, public_post
+from ..governance import blocked, conversation_blocked, public_post
 
 router = APIRouter(prefix="/api", tags=["同学与消息"])
 
@@ -21,7 +21,7 @@ def people(
     return [
         public_user(r)
         for r in db.execute(
-            "SELECT * FROM users WHERE deleted_at IS NULL AND verified=1 AND banned=0 AND searchable=1 AND instr(name,?)>0 AND instr(tags,?)>0 ORDER BY id LIMIT 100",
+            "SELECT * FROM users WHERE deleted_at IS NULL AND verified=1 AND banned=0 AND is_admin=0 AND searchable=1 AND instr(name,?)>0 AND instr(tags,?)>0 ORDER BY id LIMIT 100",
             (q, tag),
         )
     ]
@@ -95,15 +95,22 @@ def conversations(user=Depends(current_user), db=Depends(get_db_readonly)):
         SELECT m.*, CASE WHEN sender_id=? THEN recipient_id ELSE sender_id END AS peer
         FROM messages m WHERE (sender_id=? OR recipient_id=?)
         AND NOT EXISTS(SELECT 1 FROM message_deletions d WHERE d.user_id=? AND d.message_id=m.id)
-    ), latest AS (SELECT peer,max(id) AS last_id FROM visible GROUP BY peer)
-    SELECT v.* FROM latest l JOIN visible v ON v.id=l.last_id
+    ), latest AS (
+        SELECT v.peer,max(v.id) AS last_id,
+            sum(CASE WHEN v.recipient_id=? AND v.is_read=0
+                AND v.id>coalesce(h.through_id,0) THEN 1 ELSE 0 END) AS unread_count
+        FROM visible v LEFT JOIN hidden_conversations h ON h.user_id=? AND h.peer_id=v.peer
+        GROUP BY v.peer
+    )
+    SELECT v.*,l.unread_count FROM latest l JOIN visible v ON v.id=l.last_id
     WHERE l.last_id>coalesce((SELECT through_id FROM hidden_conversations h WHERE h.user_id=? AND h.peer_id=l.peer),0)
-    ORDER BY v.id DESC''', (user['id'], user['id'], user['id'], user['id'], user['id'])).fetchall()
+    ORDER BY v.id DESC''', (user['id'], user['id'], user['id'], user['id'], user['id'], user['id'], user['id'])).fetchall()
     result = []
     for row in rows:
         peer = db.execute('SELECT * FROM users WHERE id=?', (row['peer'],)).fetchone()
         result.append({'peer': {'id': peer['id'], 'name': peer['name']},
-                       'last': {'body': row['body'], 'created_at': row['created_at']}})
+                       'last': {'body': row['body'], 'created_at': row['created_at']},
+                       'unread_count': row['unread_count']})
     return result
 
 
@@ -113,8 +120,10 @@ def conversation_info(peer_id: int, user=Depends(current_user), db=Depends(get_d
     if not peer:
         raise HTTPException(404, '同学不存在')
     return {'id': peer_id, 'name': peer['name'], 'blocked_by_me': blocked(db, peer_id, user['id']),
+            'can_block': bool(user['verified'] and not user['banned'] and not user['is_admin']
+                              and not peer['is_admin'] and not peer['deleted_at'] and peer_id != user['id']),
             'can_message': bool(user['verified'] and not user['banned'] and peer['verified'] and not peer['banned']
-                                and not peer['deleted_at'] and not blocked(db, user['id'], peer_id) and peer_id != user['id'])}
+                                and not peer['deleted_at'] and not conversation_blocked(db, user['id'], peer_id) and peer_id != user['id'])}
 
 
 @router.post('/conversations/{peer_id}/hide')
@@ -146,8 +155,10 @@ def delete_message(message_id: int, user=Depends(student), db=Depends(get_db)):
 
 
 @router.post('/messages/{peer_id}/read')
-def read_messages(peer_id: int, user=Depends(current_user), db=Depends(get_db)):
-    db.execute('UPDATE messages SET is_read=1 WHERE sender_id=? AND recipient_id=?', (peer_id, user['id']))
+def read_messages(peer_id: int, through_id: int | None = Body(default=None, embed=True, ge=0),
+                  user=Depends(current_user), db=Depends(get_db)):
+    db.execute('UPDATE messages SET is_read=1 WHERE sender_id=? AND recipient_id=? AND (? IS NULL OR id<=?)',
+               (peer_id, user['id'], through_id, through_id))
     return {'ok': True}
 
 
@@ -164,7 +175,7 @@ def send_message(peer_id: int, data: Message, user=Depends(student), db=Depends(
         raise HTTPException(422, '不能给自己发送私信')
     if not db.execute('SELECT 1 FROM users WHERE id=? AND verified=1 AND banned=0 AND deleted_at IS NULL', (peer_id,)).fetchone():
         raise HTTPException(404, '收件人当前不可接收私信')
-    if blocked(db, user['id'], peer_id):
+    if conversation_blocked(db, user['id'], peer_id):
         raise HTTPException(403, '当前无法向该用户发送私信')
     message_id = db.execute('INSERT INTO messages(sender_id,recipient_id,body,created_at,client_id) VALUES(?,?,?,?,?)',
                             (user['id'], peer_id, data.body, now(), data.client_id)).lastrowid

@@ -56,7 +56,7 @@ def test_personal_deletion_hiding_and_idempotent_send(client):
 def test_block_direction_cascades_multiple_posts_and_preserves_acceptance(client):
     login(client, "chen")
     first, second = new_post(client, (2,)), new_post(client, (2,))
-    login(client)
+    login(client, "shen")
     app_a, app_b = apply(client, first), apply(client, second)
     login(client, "chen")
     assert (
@@ -65,15 +65,16 @@ def test_block_direction_cascades_multiple_posts_and_preserves_acceptance(client
         ).status_code
         == 200
     )
-    assert client.put("/api/blocks/1", json={}).status_code == 200
-    assert client.put("/api/blocks/1", json={}).status_code == 200
+    assert client.put("/api/blocks/3", json={}).status_code == 200
+    assert client.put("/api/blocks/3", json={}).status_code == 200
     apps = {
         r["id"]: r for r in client.get(f"/api/posts/{second['id']}/applications").json()
     }
     assert apps[app_b]["status"] == "rejected"
-    assert client.get("/api/blocks").json()[0]["id"] == 1
-    send(client, 1, "outgoing remains allowed")
-    login(client)
+    assert client.get("/api/blocks").json()[0]["id"] == 3
+    assert client.post("/api/messages/3", json={"body": "blocked outgoing"}).status_code == 403
+    assert client.get("/api/conversations/3").json()["can_message"] is False
+    login(client, "shen")
     assert client.post("/api/messages/2", json={"body": "blocked"}).status_code == 403
     assert (
         client.post(
@@ -86,8 +87,8 @@ def test_block_direction_cascades_multiple_posts_and_preserves_acceptance(client
     assert mine[app_a]["status"] == "accepted"
     assert mine[app_b]["status"] == "rejected"
     login(client, "chen")
-    client.delete("/api/blocks/1")
-    login(client)
+    client.delete("/api/blocks/3")
+    login(client, "shen")
     send(client, 2, "allowed again")
     assert apply(client, second) != app_b
     assert (
@@ -564,3 +565,91 @@ def test_legacy_takedown_state_migrates_to_independent_restriction(client):
     own = {a['id']:a for a in client.get('/api/me/applications').json()}
     assert own[app_id]['status'] == 'pending'
     assert client.get(f"/api/posts/{post['id']}").status_code == 200
+
+
+def test_conversation_unread_counts_follow_visible_messages_and_read_cursor(client):
+    login(client, "chen")
+    first = send(client, 3, "first unread", "unread-1")
+    second = send(client, 3, "second unread", "unread-2")
+    login(client, "zhou")
+    send(client, 3, "another contact", "unread-other")
+    login(client, "shen")
+    counts = {row["peer"]["id"]: row["unread_count"] for row in client.get("/api/conversations").json()}
+    assert counts == {2: 2, 4: 1}
+    assert client.get("/api/unread").json()["messages"] == sum(counts.values())
+    assert client.post("/api/messages/2/read", json={"through_id": first}).status_code == 200
+    counts = {row["peer"]["id"]: row["unread_count"] for row in client.get("/api/conversations").json()}
+    assert counts == {2: 1, 4: 1}
+    assert client.delete(f"/api/messages/{second}").status_code == 200
+    counts = {row["peer"]["id"]: row["unread_count"] for row in client.get("/api/conversations").json()}
+    assert counts == {2: 0, 4: 1}
+    assert client.post("/api/conversations/4/hide", json={}).status_code == 200
+    assert client.get("/api/unread").json()["messages"] == 0
+    login(client, "zhou")
+    send(client, 3, "new after hiding", "unread-reappears")
+    login(client, "shen")
+    counts = {row["peer"]["id"]: row["unread_count"] for row in client.get("/api/conversations").json()}
+    assert counts == {2: 0, 4: 1}
+    assert client.post("/api/messages/4/read", json={}).status_code == 200
+    assert all(row["unread_count"] == 0 for row in client.get("/api/conversations").json())
+    assert client.post("/api/messages/2/read", json={"through_id": -1}).status_code == 422
+
+
+def test_private_messages_block_both_directions_and_require_all_blocks_removed(client):
+    login(client, "chen")
+    send(client, 3, "before block from chen")
+    assert client.put("/api/blocks/3", json={}).status_code == 200
+    info = client.get("/api/conversations/3").json()
+    assert info["blocked_by_me"] is True
+    assert info["can_message"] is False
+    assert client.post("/api/messages/3", json={"body": "blocked outgoing"}).status_code == 403
+    login(client, "shen")
+    info = client.get("/api/conversations/2").json()
+    assert info["blocked_by_me"] is False
+    assert info["can_message"] is False
+    assert client.post("/api/messages/2", json={"body": "blocked incoming"}).status_code == 403
+    assert client.get("/api/messages/2").json()[0]["body"] == "before block from chen"
+    assert client.put("/api/blocks/2", json={}).status_code == 200
+    login(client, "chen")
+    assert client.delete("/api/blocks/3").status_code == 200
+    assert client.get("/api/conversations/3").json()["can_message"] is False
+    assert client.post("/api/messages/3", json={"body": "still blocked"}).status_code == 403
+    login(client, "shen")
+    assert client.delete("/api/blocks/2").status_code == 200
+    assert client.get("/api/conversations/2").json()["can_message"] is True
+    send(client, 2, "restored from shen")
+    login(client, "chen")
+    assert client.get("/api/conversations/3").json()["can_message"] is True
+    send(client, 3, "restored from chen", "new-request")
+    assert len(client.get("/api/messages/3").json()) == 3
+
+
+def test_admins_cannot_participate_in_blacklists_and_old_blocks_do_not_restrict_them(client):
+    login(client)
+    assert client.put("/api/blocks/2", json={}).status_code == 403
+    assert client.get("/api/conversations/2").json()["can_block"] is False
+    login(client, "chen")
+    assert client.put("/api/blocks/1", json={}).status_code == 403
+    assert client.get("/api/conversations/1").json()["can_block"] is False
+    with connect() as db:
+        assert db.execute("SELECT count(*) FROM blocks").fetchone()[0] == 0
+    assert client.put("/api/blocks/3", json={}).status_code == 200
+    login(client, "shen")
+    assert client.put("/api/blocks/2", json={}).status_code == 200
+    with connect() as db:
+        db.execute("UPDATE users SET is_admin=1 WHERE id=3")
+    info = client.get("/api/conversations/2").json()
+    assert info["can_block"] is False
+    assert info["blocked_by_me"] is False
+    assert info["can_message"] is True
+    assert client.get("/api/blocks").json() == []
+    assert client.put("/api/blocks/2", json={}).status_code == 403
+    send(client, 2, "admin can still contact student")
+    login(client, "chen")
+    info = client.get("/api/conversations/3").json()
+    assert info["can_block"] is False
+    assert info["blocked_by_me"] is False
+    assert info["can_message"] is True
+    assert client.get("/api/blocks").json() == []
+    assert client.put("/api/blocks/3", json={}).status_code == 403
+    send(client, 3, "student can still contact admin")

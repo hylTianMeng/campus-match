@@ -217,66 +217,67 @@ export function Posts() {
       </Header>
       <LoadState {...data} retry={data.refresh} />
       {data.data?.length === 0 && <Empty />}
-      <div className="panel">
-        {data.data?.map((p) => (
-          <div className="row" key={p.id}>
-            <div className="grow">
-              <h3>
-                <Link to={'/detail/' + p.id}>{p.title}</Link>
-              </h3>
-              <p>
-                {p.category} ·{' '}
-                {p.status === 'open'
-                  ? '招募中'
-                  : p.end_reason === 'taken_down'
-                    ? '已下架'
-                    : '已结束'}{' '}
-                · {p.pending_count}{' '}
-                人待审核 · 更新于 {date(p.updated_at)}
-              </p>
+      {Boolean(data.data?.length) && (
+        <div className="panel">
+          {data.data?.map((p) => (
+            <div className="row" key={p.id}>
+              <div className="grow">
+                <h3>
+                  <Link to={'/detail/' + p.id}>{p.title}</Link>
+                </h3>
+                <p>
+                  {p.category} ·{' '}
+                  {p.status === 'open'
+                    ? '招募中'
+                    : p.end_reason === 'taken_down'
+                      ? '已下架'
+                      : '已结束'}{' '}
+                  · {p.pending_count} 人待审核 · 更新于 {date(p.updated_at)}
+                </p>
+              </div>
+              <div className="actions">
+                <Link className="btn secondary" to={'/posts/' + p.id + '/applications'}>
+                  管理申请
+                </Link>
+                <Link className="link" to={'/edit/' + p.id}>
+                  编辑
+                </Link>
+                {p.status === 'open' && (
+                  <>
+                    <button
+                      className="link"
+                      onClick={() =>
+                        ask({
+                          title: '提前结束',
+                          description:
+                            '招募结束后录取结果锁定，不能重新开放。请先处理所有待审核申请。',
+                          path: '/posts/' + p.id + '/end',
+                        })
+                      }
+                    >
+                      提前结束
+                    </button>
+                  </>
+                )}
+                <button
+                  className="link"
+                  onClick={() =>
+                    ask({
+                      title: '删除招募',
+                      description: '仅从未收到申请的招募可以删除，删除后不可恢复。',
+                      path: '/posts/' + p.id,
+                      method: 'DELETE',
+                      onForce: () => setForceDelete({ id: p.id, title: p.title }),
+                    })
+                  }
+                >
+                  删除
+                </button>
+              </div>
             </div>
-            <div className="actions">
-              <Link className="btn secondary" to={'/posts/' + p.id + '/applications'}>
-                管理申请
-              </Link>
-                  <Link className="link" to={'/edit/' + p.id}>
-                    编辑
-                  </Link>
-              {p.status === 'open' && (
-                <>
-                  <button
-                    className="link"
-                    onClick={() =>
-                      ask({
-                        title: '提前结束',
-                        description:
-                          '招募结束后录取结果锁定，不能重新开放。请先处理所有待审核申请。',
-                        path: '/posts/' + p.id + '/end',
-                      })
-                    }
-                  >
-                    提前结束
-                  </button>
-                </>
-              )}
-              <button
-                className="link"
-                onClick={() =>
-                  ask({
-                    title: '删除招募',
-                    description: '仅从未收到申请的招募可以删除，删除后不可恢复。',
-                    path: '/posts/' + p.id,
-                    method: 'DELETE',
-                    onForce: () => setForceDelete({ id: p.id, title: p.title }),
-                  })
-                }
-              >
-                删除
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
       {modal}
       {forceDelete && (
         <ForceDeleteModal

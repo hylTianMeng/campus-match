@@ -68,13 +68,14 @@ export function ReportButton({
 
 export function BlockButton({ personId, onChange }: { personId: number; onChange?: () => void }) {
   const { user, toast } = useSession();
-  const info = useData<{ blocked_by_me: boolean }>(
-    user && personId !== user.id ? '/conversations/' + personId : null,
+  const info = useData<{ blocked_by_me: boolean; can_block: boolean }>(
+    user && !user.is_admin && personId !== user.id ? '/conversations/' + personId : null,
   );
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  if (!user?.verified || user.banned || personId === user.id) return null;
+  if (!user?.verified || user.banned || user.is_admin || personId === user.id) return null;
+  if (!info.data?.can_block) return <ErrorNote error={info.error} />;
   const blocked = !!info.data?.blocked_by_me;
   return (
     <>
@@ -94,7 +95,7 @@ export function BlockButton({ personId, onChange }: { personId: number; onChange
           <p style={{ margin: '18px 0' }}>
             {blocked
               ? '解除后可恢复符合条件的新申请和私信，旧申请保持原结果。'
-              : '对方将无法向你发送私信或申请你的招募，现有待审申请将被拒绝，已录取结果保留。'}
+              : '拉黑后双方将无法互发私信，对方也无法申请你的招募。现有待审申请将被拒绝，已录取结果保留。'}
           </p>
           <ErrorNote error={error} />
           <button

@@ -490,6 +490,21 @@ def test_expiry_and_favorites(client):
     )
 
 
+def test_people_excludes_administrators_from_lists_and_search(client):
+    admin = login(client)
+    classmates = client.get('/api/people').json()
+    assert admin['id'] not in {person['id'] for person in classmates}
+    assert {person['name'] for person in classmates} >= {'陈书宁', '沈亦舟'}
+
+    login(client, 'chen')
+    for query in ['', '?q=林知夏', '?tag=React', '?q=林知夏&tag=React']:
+        response = client.get('/api/people' + query)
+        assert response.status_code == 200
+        assert admin['id'] not in {person['id'] for person in response.json()}
+    assert client.get('/api/people?q=林知夏').json() == []
+    assert [person['name'] for person in client.get('/api/people?q=沈亦舟').json()] == ['沈亦舟']
+
+
 def test_profile_privacy_and_messages(client):
     lin = login(client)
     response = client.patch(

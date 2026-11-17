@@ -25,9 +25,7 @@ export function Admin() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const params = new URLSearchParams({ q: query, banned });
-  const data = useData<AdminUser[]>(
-    user?.is_admin ? '/admin/users?' + params.toString() : null,
-  );
+  const data = useData<AdminUser[]>(user?.is_admin ? '/admin/users?' + params.toString() : null);
   if (user?.is_admin === false) {
     return (
       <Empty title="需要管理员权限">
@@ -84,69 +82,71 @@ export function Admin() {
       </div>
       <LoadState {...data} retry={data.refresh} />
       {data.data?.length === 0 && <Empty title="没有符合条件的用户" />}
-      <div className="panel" style={{ overflowX: 'auto' }}>
-        <table>
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>昵称</th>
-              <th>邮箱</th>
-              <th>院系</th>
-              <th>状态</th>
-              <th>角色</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.data?.map((u) => (
-              <tr key={u.id}>
-                <td data-label="ID">{u.id}</td>
-                <td data-label="昵称">{u.name}</td>
-                <td data-label="邮箱">{u.email}</td>
-                <td data-label="院系">{u.dept || '—'}</td>
-                <td data-label="状态">
-                  <Badge color={u.banned ? 'red' : 'green'}>{u.banned ? '已封禁' : '正常'}</Badge>{' '}
-                  <Badge color={u.verified ? 'green' : 'gray'}>
-                    {u.verified ? '已认证' : '未认证'}
-                  </Badge>
-                </td>
-                <td data-label="角色">{u.is_admin ? '管理员' : '普通用户'}</td>
-                <td data-label="操作">
-                  <div className="actions">
-                    {u.banned ? (
-                      <button
-                        className="btn secondary"
-                        disabled={busy}
-                        onClick={() => {
-                          setTarget(u);
-                          setAction('unban');
-                          setReason('');
-                          setError('');
-                        }}
-                      >
-                        解封
-                      </button>
-                    ) : (
-                      <button
-                        className="btn danger"
-                        disabled={busy || u.is_admin || u.id === user?.id}
-                        onClick={() => {
-                          setTarget(u);
-                          setAction('ban');
-                          setReason('');
-                          setError('');
-                        }}
-                      >
-                        封禁
-                      </button>
-                    )}
-                  </div>
-                </td>
+      {Boolean(data.data?.length) && (
+        <div className="panel" style={{ overflowX: 'auto' }}>
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>昵称</th>
+                <th>邮箱</th>
+                <th>院系</th>
+                <th>状态</th>
+                <th>角色</th>
+                <th>操作</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {data.data?.map((u) => (
+                <tr key={u.id}>
+                  <td data-label="ID">{u.id}</td>
+                  <td data-label="昵称">{u.name}</td>
+                  <td data-label="邮箱">{u.email}</td>
+                  <td data-label="院系">{u.dept || '—'}</td>
+                  <td data-label="状态">
+                    <Badge color={u.banned ? 'red' : 'green'}>{u.banned ? '已封禁' : '正常'}</Badge>{' '}
+                    <Badge color={u.verified ? 'green' : 'gray'}>
+                      {u.verified ? '已认证' : '未认证'}
+                    </Badge>
+                  </td>
+                  <td data-label="角色">{u.is_admin ? '管理员' : '普通用户'}</td>
+                  <td data-label="操作">
+                    <div className="actions">
+                      {u.banned ? (
+                        <button
+                          className="btn secondary"
+                          disabled={busy}
+                          onClick={() => {
+                            setTarget(u);
+                            setAction('unban');
+                            setReason('');
+                            setError('');
+                          }}
+                        >
+                          解封
+                        </button>
+                      ) : (
+                        <button
+                          className="btn danger"
+                          disabled={busy || u.is_admin || u.id === user?.id}
+                          onClick={() => {
+                            setTarget(u);
+                            setAction('ban');
+                            setReason('');
+                            setError('');
+                          }}
+                        >
+                          封禁
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       {target && (
         <Modal
           title={action === 'ban' ? '封禁用户' : '解封用户'}

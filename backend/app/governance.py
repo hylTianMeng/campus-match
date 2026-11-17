@@ -7,10 +7,22 @@ from .db import now, notify
 def blocked(db, sender_id, recipient_id):
     return bool(
         db.execute(
-            "SELECT 1 FROM blocks WHERE blocker_id=? AND blocked_id=?",
+            """SELECT 1 FROM blocks b JOIN users actor ON actor.id=b.blocker_id
+            JOIN users target ON target.id=b.blocked_id
+            WHERE b.blocker_id=? AND b.blocked_id=? AND actor.is_admin=0 AND target.is_admin=0""",
             (recipient_id, sender_id),
         ).fetchone()
     )
+
+
+def conversation_blocked(db, first_user_id, second_user_id):
+    return bool(db.execute(
+        """SELECT 1 FROM blocks b JOIN users actor ON actor.id=b.blocker_id
+        JOIN users target ON target.id=b.blocked_id
+        WHERE actor.is_admin=0 AND target.is_admin=0
+        AND ((b.blocker_id=? AND b.blocked_id=?) OR (b.blocker_id=? AND b.blocked_id=?))""",
+        (first_user_id, second_user_id, second_user_id, first_user_id),
+    ).fetchone())
 
 
 def public_post(db, post, viewer=None):

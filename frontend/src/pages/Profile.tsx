@@ -5,7 +5,7 @@ import { useSession } from '../context';
 import type { User } from '../types';
 import { Header, Field, ErrorNote, Modal, Avatar, tagsFrom } from '../components/ui';
 export function Profile({ settings = false }: { settings?: boolean }) {
-  const { user, setUser, toast, logout } = useSession();
+  const { user, setUser, toast } = useSession();
   const navigate = useNavigate();
   // 初始值用空字段兜底，避免 user 为 null 时崩溃；真实数据由下方 useEffect 填充。
   const [form, setForm] = useState(() => ({
@@ -209,27 +209,6 @@ export function Profile({ settings = false }: { settings?: boolean }) {
       </form>
       {settings && (
         <>
-          <div className="panel">
-            <h2>登录账号</h2>
-            <p style={{ marginBottom: 16 }}>{user!.email}</p>
-            <button
-              className="btn secondary"
-              disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  await logout();
-                  navigate('/discover');
-                } catch (e) {
-                  setError((e as Error).message);
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              退出登录
-            </button>
-          </div>
           <div className="panel">
             <h2>注销账号</h2>
             <p style={{ marginBottom: 16 }}>
