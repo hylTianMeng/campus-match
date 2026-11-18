@@ -58,6 +58,11 @@ def set_user_ban(db, actor, target_id, banned, reason, *, from_report=False):
     if bool(target["banned"]) == banned:
         return False
     db.execute("UPDATE users SET banned=? WHERE id=?", (banned, target_id))
+    # 群聊禁言对齐账号封禁状态；解封后自动恢复发言。
+    db.execute(
+        "UPDATE chat_members SET muted=? WHERE user_id=?",
+        (1 if banned else 0, target_id),
+    )
     action = "ban" if banned else "unban"
     action_id = db.execute(
         "INSERT INTO admin_actions(admin_id,target_user_id,action,reason,created_at) VALUES(?,?,?,?,?)",

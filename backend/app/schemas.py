@@ -201,7 +201,7 @@ class Reason(Input):
 
 
 class ReportCreate(Reason):
-    target_type: Literal["post", "user", "message"]
+    target_type: Literal["post", "user", "message", "chat_message"]
     target_id: int = Field(gt=0)
 
 

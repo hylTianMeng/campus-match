@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS hidden_conversations(
 );
 CREATE TABLE IF NOT EXISTS reports(
  id INTEGER PRIMARY KEY, reporter_id INTEGER NOT NULL REFERENCES users(id),
- target_type TEXT NOT NULL CHECK(target_type IN ('post','user','message')), target_id INTEGER NOT NULL,
+ target_type TEXT NOT NULL CHECK(target_type IN ('post','user','message','chat_message')), target_id INTEGER NOT NULL,
  subject_user_id INTEGER NOT NULL REFERENCES users(id), post_id INTEGER,
  reason TEXT NOT NULL, target_summary TEXT NOT NULL,
  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','resolved','dismissed')),
@@ -32,6 +32,16 @@ CREATE TABLE IF NOT EXISTS message_access_audits(
 CREATE TRIGGER IF NOT EXISTS preserve_message_access_update BEFORE UPDATE ON message_access_audits
 BEGIN SELECT RAISE(ABORT,'access audit is append only'); END;
 CREATE TRIGGER IF NOT EXISTS preserve_message_access_delete BEFORE DELETE ON message_access_audits
+BEGIN SELECT RAISE(ABORT,'access audit is append only'); END;
+-- 群聊访问审计：不设外键级联，群聊清库后审计记录仍保留（append only）。
+CREATE TABLE IF NOT EXISTS chat_access_audits(
+ id INTEGER PRIMARY KEY, admin_id INTEGER NOT NULL REFERENCES users(id),
+ chat_id INTEGER NOT NULL,
+ reason TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS preserve_chat_access_update BEFORE UPDATE ON chat_access_audits
+BEGIN SELECT RAISE(ABORT,'access audit is append only'); END;
+CREATE TRIGGER IF NOT EXISTS preserve_chat_access_delete BEFORE DELETE ON chat_access_audits
 BEGIN SELECT RAISE(ABORT,'access audit is append only'); END;
 CREATE TRIGGER IF NOT EXISTS preserve_message_body BEFORE UPDATE OF body,sender_id,recipient_id,created_at ON messages
 BEGIN SELECT RAISE(ABORT,'message content is immutable'); END;

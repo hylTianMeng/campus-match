@@ -86,7 +86,16 @@ def unread(user=Depends(current_user), db=Depends(get_db_readonly)):
         AND m.id>coalesce((SELECT h.through_id FROM hidden_conversations h WHERE h.user_id=? AND h.peer_id=m.sender_id),0)''',
                        (user['id'], user['id'], user['id'])).fetchone()[0]
     notices = db.execute('SELECT count(*) FROM notices WHERE user_id=? AND is_read=0', (user['id'],)).fetchone()[0]
-    return {'messages': count, 'notices': notices, 'total': count + notices}
+    chats = db.execute('''SELECT count(*) FROM chat_messages x
+        JOIN chat_members m ON m.chat_id=x.chat_id AND m.user_id=? AND m.deleted_at IS NULL
+        JOIN group_chats c ON c.id=m.chat_id AND c.retention_until IS NULL
+        WHERE x.id>m.last_read_id AND x.sender_id<>m.user_id
+          AND x.id NOT IN (
+              SELECT d.message_id FROM chat_message_deletions d
+              WHERE d.chat_id=m.chat_id AND d.user_id=m.user_id
+          )''',
+                       (user['id'],)).fetchone()[0]
+    return {'messages': count, 'notices': notices, 'chats': chats, 'total': count + notices + chats}
 
 
 @router.get('/conversations')

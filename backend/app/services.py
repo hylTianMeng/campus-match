@@ -100,6 +100,73 @@ def transition(db, app, status, reason, actor_id):
     notify(db, app["user_id"], reason, app["post_id"], event_key=f"application-event:{event_id}", kind="application", target_path="/applications")
 
 
+def ensure_group_chat(db, post, user_id, role_name="成员"):
+    """首个录取通过时自动创建群聊，并把发布者与新录取成员加入。
+
+    幂等：群聊与招募一一对应，重复录取时仅刷新岗位标注（保留禁言/删除状态）。
+    发布者岗位标注为“发布者”，录取成员标注其实际录取岗位名。
+    """
+    chat = db.execute(
+        "SELECT * FROM group_chats WHERE post_id=?", (post["id"],)
+    ).fetchone()
+    if not chat:
+        chat_id = db.execute(
+            "INSERT INTO group_chats(post_id,created_at) VALUES(?,?)",
+            (post["id"], now()),
+        ).lastrowid
+        db.execute(
+            "INSERT INTO chat_members(chat_id,user_id,role_name) VALUES(?,?,'发布者')",
+            (chat_id, post["owner_id"]),
+        )
+        title = post["title"]
+        notify(
+            db,
+            post["owner_id"],
+            f"「{title}」已产生首个录取，组队群聊已创建，可在消息中心查看。",
+            event_key=f"chat-created:{post['id']}:owner",
+            kind="chat",
+            target_path="/chats",
+        )
+    else:
+        chat_id = chat["id"]
+        title = post["title"]
+    db.execute(
+        """INSERT INTO chat_members(chat_id,user_id,role_name) VALUES(?,?,?)
+           ON CONFLICT(chat_id,user_id) DO UPDATE SET role_name=excluded.role_name""",
+        (chat_id, user_id, role_name),
+    )
+    if user_id != post["owner_id"]:
+        notify(
+            db,
+            user_id,
+            f"你已被「{title}」录取，组队群聊已就绪，可在消息中心查看。",
+            event_key=f"chat-created:{post['id']}:{user_id}",
+            kind="chat",
+            target_path="/chats",
+        )
+
+
+def remove_group_member(db, post, user_id, note):
+    """撤销录取或放弃录取时，把成员移出对应群聊（群聊不存在时为空操作）。"""
+    chat = db.execute(
+        "SELECT id FROM group_chats WHERE post_id=?", (post["id"],)
+    ).fetchone()
+    if not chat:
+        return
+    db.execute(
+        "DELETE FROM chat_members WHERE chat_id=? AND user_id=?",
+        (chat["id"], user_id),
+    )
+    notify(
+        db,
+        user_id,
+        f"你已退出「{post['title']}」的群聊。{note}",
+        event_key=f"chat-left:{post['id']}:{user_id}",
+        kind="chat",
+        target_path="/chats",
+    )
+
+
 def decide(db, app_id, user, action, reason, allow_reapply=True):
     app = db.execute("SELECT * FROM applications WHERE id=?", (app_id,)).fetchone()
     if not app:
@@ -126,6 +193,8 @@ def decide(db, app_id, user, action, reason, allow_reapply=True):
         notify(db, post["owner_id"], f"{actor['name']} {verb}（岗位：{role['name']}）。可在申请管理中处理。",
                post["id"], event_key=f"application-owner:{app['id']}:{action}", kind="application",
                target_path=f"/posts/{post['id']}/applications")
+        if action == "give-up":
+            remove_group_member(db, post, app["user_id"], "如需重新加入，可再次申请并被录取。")
         return
     require_owner(post, user)
     expected = "accepted" if action == "revoke" else "pending"
@@ -141,6 +210,8 @@ def decide(db, app_id, user, action, reason, allow_reapply=True):
                 (post["id"], app["user_id"], reason, now()),
             )
         transition(db, app, "rejected", text, user["id"])
+        if action == "revoke":
+            remove_group_member(db, post, app["user_id"], "如对结果有疑问，可联系发布者沟通。")
         return
     applicant = db.execute(
         "SELECT * FROM users WHERE id=?", (app["user_id"],)
@@ -162,6 +233,7 @@ def decide(db, app_id, user, action, reason, allow_reapply=True):
     if accepted >= role["capacity"]:
         raise HTTPException(409, "岗位已满")
     transition(db, app, "accepted", "申请已通过：" + role["name"], user["id"])
+    ensure_group_chat(db, post, app["user_id"], role["name"])
     for other in db.execute(
         "SELECT * FROM applications WHERE post_id=? AND user_id=? AND status='pending'",
         (post["id"], app["user_id"]),

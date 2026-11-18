@@ -14,6 +14,7 @@ import {
   ReportAdmin,
   PostAdmin,
   PrivateMessageAdmin,
+  GroupChatAdmin,
   ActionHistory,
 } from './pages/Governance';
 import { Admin } from './pages/Admin';
@@ -78,6 +79,16 @@ export default function App() {
                 <Guard>
                   <AdminGuard>
                     <PrivateMessageAdmin />
+                  </AdminGuard>
+                </Guard>
+              }
+            />
+            <Route
+              path="admin/chats"
+              element={
+                <Guard>
+                  <AdminGuard>
+                    <GroupChatAdmin />
                   </AdminGuard>
                 </Guard>
               }
