@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useData, write } from '../api';
 import { useSession } from '../context';
-import type { Application, Draft, Post } from '../types';
+import type { Application, Draft, Post, ResourceItem } from '../types';
 import { PostCard } from '../components/PostCard';
 import {
   Header,
@@ -12,10 +12,23 @@ import {
   Field,
   ErrorNote,
   Badge,
+  Avatar,
   SafeLink,
   date,
   statusLabel,
 } from '../components/ui';
+function applicationResources(application: Application): ResourceItem[] {
+  const items = application.resources ?? [];
+  if (
+    !application.portfolio ||
+    items.some((item) => item.type === 'link' && item.content === application.portfolio)
+  ) return items;
+  return [
+    ...items,
+    { title: '历史网页链接', type: 'link', content: application.portfolio, attachment_id: null },
+  ];
+}
+
 interface Confirmation {
   title: string;
   description: string;
@@ -321,7 +334,7 @@ export function Drafts() {
           </Link>
         </Empty>
       )}
-      <div className="panel">
+      {!!data.data?.length && <div className="panel">
         {data.data?.map((d) => (
           <div className="row" key={d.id}>
             <div className="grow">
@@ -353,7 +366,7 @@ export function Drafts() {
             </div>
           </div>
         ))}
-      </div>
+      </div>}
       {modal}
     </>
   );
@@ -416,31 +429,67 @@ export function Applications({ team = false }: { team?: boolean }) {
       {rows?.length === 0 && <Empty />}
       {rows?.map((a) => (
         <div className="panel" key={a.id}>
-          <div className="between">
-            <div>
-              <h3>
-                <Link to={'/detail/' + a.post_id}>{a.title}</Link>
-              </h3>
-              <p>
-                {a.applicant_name} · {a.role_name} · {date(a.created_at)}
-              </p>
-            </div>
+          <div className="application-heading">
+            {owner ? (
+              <div className="application-person">
+                <Link to={'/person/' + a.user_id} aria-label={`查看${a.applicant_name}的主页`}>
+                  <Avatar name={a.applicant_name} url={a.applicant_avatar_url} className="lg" />
+                </Link>
+                <div className="application-person-copy">
+                  <h3 className="application-name">
+                    <Link to={'/person/' + a.user_id}>{a.applicant_name}</Link>
+                  </h3>
+                  <p>申请岗位：{a.role_name}</p>
+                  <p className="small muted">提交于 {date(a.created_at)}</p>
+                  <div className="actions application-person-actions">
+                    <Link className="btn secondary" to={'/person/' + a.user_id}>查看主页</Link>
+                    <Link className="btn secondary" to={'/chats?peer=' + a.user_id}>私信联系</Link>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="application-person application-project-summary">
+                <div className="application-person-copy">
+                  <span className="small muted">申请项目</span>
+                  <h3 className="application-name">
+                    <Link to={'/detail/' + a.post_id}>{a.title}</Link>
+                  </h3>
+                  <p>申请岗位：{a.role_name}</p>
+                  <p className="small muted">提交于 {date(a.created_at)}</p>
+                </div>
+              </div>
+            )}
             <Badge color={a.status === 'accepted' ? 'green' : ''}>{statusLabel[a.status]}</Badge>
           </div>
+          {owner ? (
+            <div className="application-post">
+              <span className="small muted">申请项目</span>
+              <Link className="application-post-title" to={'/detail/' + a.post_id}>{a.title}</Link>
+            </div>
+          ) : (
+            <div className="application-post application-recruiter">
+              <Link to={'/person/' + a.owner_id} aria-label={`查看${a.owner_name}的主页`}>
+                <Avatar name={a.owner_name} url={a.owner_avatar_url} />
+              </Link>
+              <div className="application-recruiter-info">
+                <span className="small muted">招募者</span>
+                <Link className="application-recruiter-name" to={'/person/' + a.owner_id}>{a.owner_name}</Link>
+              </div>
+              <div className="actions application-person-actions">
+                <Link className="btn secondary" to={'/person/' + a.owner_id}>查看主页</Link>
+                <Link className="btn secondary" to={'/chats?peer=' + a.owner_id}>私信联系</Link>
+              </div>
+            </div>
+          )}
           <p className="bodycopy" style={{ marginTop: 12 }}>
             留言：{a.message || '无'}
           </p>
           <p className="bodycopy">相关经历：{a.experience || '无'}</p>
-          {a.portfolio ? (
-            <SafeLink url={a.portfolio}>简历 / 作品</SafeLink>
-          ) : (
-            !a.resources?.length && <p className="bodycopy">简历 / 作品：无</p>
-          )}
           {a.reason && <p className="small muted">{a.reason}</p>}
-          {!!a.resources?.length && (
+          {!!applicationResources(a).length && (
             <div style={{ marginTop: 16 }}>
               <h4>网页与附件</h4>
-              {a.resources.map((item, index) => (
+              {applicationResources(a).map((item, index) => (
                 <div className="roleform" key={index}>
                   <strong>{item.title}</strong>
                   <div>

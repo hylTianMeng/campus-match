@@ -1730,3 +1730,107 @@ button:disabled {
   min-height: 0;
   overflow-y: auto;
 }
+
+.application-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.application-person {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+  flex: 1;
+}
+.application-person > a {
+  flex-shrink: 0;
+}
+.application-person-copy {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.application-person-copy .application-name {
+  font-size: 22px;
+  line-height: 1.4;
+  margin-bottom: 5px;
+}
+.application-heading > .badge {
+  align-self: flex-start;
+  flex-shrink: 0;
+}
+.application-person-copy .application-person-actions {
+  margin-top: 10px;
+}
+.application-person-actions .btn {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+.application-post {
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: #f8f5fb;
+  border-left: 3px solid var(--p);
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+.application-post-title {
+  display: block;
+  margin-top: 4px;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.application-post-title:hover {
+  color: var(--p);
+  text-decoration: underline;
+}
+.application-project-summary .application-name {
+  margin-top: 4px;
+}
+.application-recruiter {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.application-recruiter > a {
+  flex-shrink: 0;
+}
+.application-recruiter > div {
+  min-width: 0;
+}
+.application-recruiter-info {
+  flex: 1;
+}
+.application-recruiter-name {
+  display: block;
+  font-weight: 600;
+}
+.application-recruiter-name:hover {
+  color: var(--p);
+  text-decoration: underline;
+}
+.personal-report-heading {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.personal-report-heading h3 {
+  flex: 1 1 220px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 740px) {
+  .application-person {
+    gap: 12px;
+  }
+  .application-heading {
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .application-recruiter .application-person-actions {
+    flex-basis: 100%;
+  }
+}

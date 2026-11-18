@@ -69,7 +69,7 @@ export function BlockList() {
       <Header title="黑名单" sub="对方无法向你私信或申请你的招募，解除后旧申请保持原结果。" />
       <LoadState {...data} retry={data.refresh} />
       {data.data?.length === 0 && <Empty />}
-      <div className="panel">
+      {!!data.data?.length && <div className="panel">
         {data.data?.map((p) => (
           <div className="row" key={p.id}>
             <div className="grow">
@@ -78,7 +78,7 @@ export function BlockList() {
             <BlockButton personId={p.id} onChange={data.refresh} />
           </div>
         ))}
-      </div>
+      </div>}
     </>
   );
 }
@@ -112,7 +112,7 @@ export function OwnReports() {
       {data.data?.length === 0 && <Empty />}
       {data.data?.map((r) => (
         <div className="panel" key={r.id}>
-          <div className="between">
+          <div className="between personal-report-heading">
             <h3>
               举报 #{r.id} · {r.target_summary}
             </h3>
@@ -121,7 +121,7 @@ export function OwnReports() {
           <p>{date(r.created_at)}</p>
         </div>
       ))}
-      <Pager page={page} setPage={setPage} count={data.data?.length} />
+      {(page > 0 || !!data.data?.length) && <Pager page={page} setPage={setPage} count={data.data?.length} />}
     </>
   );
 }

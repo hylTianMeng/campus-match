@@ -34,8 +34,7 @@ export function Detail() {
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const [message, setMessage] = useState(''),
-    [experience, setExperience] = useState(''),
-    [portfolio, setPortfolio] = useState('');
+    [experience, setExperience] = useState('');
   const [resources, setResources] = useState<ResourceItem[]>([]);
   const [uploading, setUploading] = useState(false);
   useEffect(() => {
@@ -43,7 +42,6 @@ export function Detail() {
     setRole(undefined);
     setMessage('');
     setExperience('');
-    setPortfolio('');
     setResources([]);
     setUploading(false);
     setError('');
@@ -415,14 +413,12 @@ export function Detail() {
                     role_id: role.id,
                     message,
                     experience,
-                    portfolio,
                     resources: resources.map(({ filename: _filename, ...item }) => item),
                   });
                   setJoin(false);
                   setRole(undefined);
                   setMessage('');
                   setExperience('');
-                  setPortfolio('');
                   setResources([]);
                   toast('申请已提交，等待审核');
                   data.refresh();
@@ -446,14 +442,6 @@ export function Detail() {
                   value={experience}
                   maxLength={3000}
                   onChange={(e) => setExperience(e.target.value)}
-                />
-              </Field>
-              <Field label="简历 / 作品链接（选填）">
-                <input
-                  type="url"
-                  value={portfolio}
-                  onChange={(e) => setPortfolio(e.target.value)}
-                  placeholder="https://"
                 />
               </Field>
               <p className="small muted">补充资料仅本人和招募发布者可见。</p>

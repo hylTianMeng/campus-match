@@ -88,6 +88,35 @@ def test_application_resources_cannot_reuse_other_users_or_bound_files(client):
     assert client.get(f"/api/applications/{first.json()['id']}/attachments/{attachment_id}").status_code == 200
 
 
+def test_application_avatar_metadata_uses_current_profile_without_exposing_path(client):
+    owner, post, applicant = prepare(client)
+    response = apply(client, post, [])
+    assert response.status_code == 201
+    app_id = response.json()["id"]
+    own = next(a for a in client.get("/api/me/applications").json() if a["id"] == app_id)
+    assert own["applicant_avatar_url"] is None
+    assert own["owner_id"] == owner["id"]
+    assert own["owner_name"] == owner["name"]
+    assert own["owner_avatar_url"] is None
+    db = connect()
+    try:
+        db.execute("UPDATE users SET avatar_path='internal-avatar.png' WHERE id=?", (applicant["id"],))
+        db.execute("UPDATE users SET avatar_path='internal-owner.png' WHERE id=?", (owner["id"],))
+        login(client, "chen")
+        review = next(a for a in client.get(f"/api/posts/{post['id']}/applications").json() if a["id"] == app_id)
+        assert review["applicant_avatar_url"] == f"/api/users/{applicant['id']}/avatar"
+        assert "_avatar_path" not in review
+        assert "internal-avatar.png" not in str(review)
+        assert review["owner_avatar_url"] == f"/api/users/{owner['id']}/avatar"
+        assert "_owner_avatar_path" not in review
+        assert "internal-owner.png" not in str(review)
+        db.execute("UPDATE users SET avatar_path='' WHERE id=?", (applicant["id"],))
+        review = next(a for a in client.get(f"/api/posts/{post['id']}/applications").json() if a["id"] == app_id)
+        assert review["applicant_avatar_url"] is None
+    finally:
+        db.close()
+
+
 def test_application_resources_validate_inputs_and_keep_legacy_portfolio(client):
     _, post, _ = prepare(client)
     for items in [

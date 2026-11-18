@@ -4,7 +4,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from ..db import get_db, get_db_readonly, now, notify
-from ..auth import optional_user, current_user, student
+from ..auth import optional_user, current_user, student, avatar_url
 from ..schemas import PostCreate, PostEdit, ApplicationCreate, Decision, ApplicationBan, Draft, AttachmentUpload
 from ..services import require_post, require_owner, require_open, post_view, decide, legacy_attachment, transition
 
@@ -514,14 +514,16 @@ def apply(
 
 def application_rows(db, where, args):
     rows = db.execute(
-        "SELECT a.*,r.name AS role_name,p.title,p.status AS post_status,(p.taken_down OR owner.banned OR owner.deleted_at IS NOT NULL) AS post_paused,u.name AS applicant_name FROM applications a JOIN roles r ON r.id=a.role_id JOIN posts p ON p.id=a.post_id JOIN users u ON u.id=a.user_id JOIN users owner ON owner.id=p.owner_id WHERE "
+        "SELECT a.*,r.name AS role_name,p.title,p.status AS post_status,(p.taken_down OR owner.banned OR owner.deleted_at IS NOT NULL) AS post_paused,u.name AS applicant_name,u.avatar_path AS _avatar_path,p.owner_id,owner.name AS owner_name,owner.avatar_path AS _owner_avatar_path FROM applications a JOIN roles r ON r.id=a.role_id JOIN posts p ON p.id=a.post_id JOIN users u ON u.id=a.user_id JOIN users owner ON owner.id=p.owner_id WHERE "
         + where
         + " ORDER BY a.id DESC",
         args,
     ).fetchall()
     return [
         {
-            **dict(row),
+            **{key: row[key] for key in row.keys() if key not in ("_avatar_path", "_owner_avatar_path")},
+            "applicant_avatar_url": avatar_url({"id": row["user_id"], "avatar_path": row["_avatar_path"]}),
+            "owner_avatar_url": avatar_url({"id": row["owner_id"], "avatar_path": row["_owner_avatar_path"]}),
             "resources": json.loads(row["resources"]),
             "reapply_banned": bool(
                 db.execute(

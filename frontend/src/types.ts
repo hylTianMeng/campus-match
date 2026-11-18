@@ -80,6 +80,10 @@ export interface Application {
   role_id: number;
   user_id: number;
   applicant_name: string;
+  applicant_avatar_url?: string | null;
+  owner_id: number;
+  owner_name: string;
+  owner_avatar_url?: string | null;
   role_name: string;
   title: string;
   post_status: string;
