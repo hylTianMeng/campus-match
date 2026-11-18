@@ -2,9 +2,9 @@ import { ReportButton, BlockButton } from '../components/SafetyActions';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useData } from '../api';
-import type { Person, Post } from '../types';
+import type { Person, Post, ProfileResource } from '../types';
 import { useSession } from '../context';
-import { Header, Tags, LoadState, Empty, Badge, Avatar } from '../components/ui';
+import { Header, Tags, LoadState, Empty, Badge, Avatar, SafeLink } from '../components/ui';
 import { PostCard } from '../components/PostCard';
 export function People() {
   const { user } = useSession();
@@ -81,6 +81,7 @@ export function People() {
   );
 }
 interface PublicProfile extends Person {
+  resources: ProfileResource[];
   public_posts: boolean;
   public_teams: boolean;
   posts: Post[] | null;
@@ -125,6 +126,27 @@ export function PersonPage() {
         <p style={{ margin: '20px 0' }}>{p.bio}</p>
         <Tags values={p.tags} />
       </div>
+      {!!p.resources?.length && (
+        <div className="panel">
+          <h2>网页与附件</h2>
+          {p.resources.map((item, index) => (
+            <div className="roleform" key={index}>
+              <h3>{item.title}</h3>
+              {item.type === 'link' ? (
+                <SafeLink url={item.content}>{item.content}</SafeLink>
+              ) : (
+                <a
+                  className="link"
+                  href={`/api/people/${p.id}/attachments/${item.attachment_id}`}
+                  download
+                >
+                  {item.filename || '下载附件'}
+                </a>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
       <div className="person-grid">
         {[
           ['posts', '发布的招募', p.public_posts],

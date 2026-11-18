@@ -1,8 +1,5 @@
 import json
-import base64
-import binascii
 from datetime import datetime, timedelta, timezone
-from pathlib import PurePath
 from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -11,19 +8,11 @@ from ..auth import optional_user, current_user, student
 from ..schemas import PostCreate, PostEdit, ApplicationCreate, Decision, ApplicationBan, Draft, AttachmentUpload
 from ..services import require_post, require_owner, require_open, post_view, decide, legacy_attachment, transition
 
+from ..attachments import decode_attachment
 from ..governance import require_visible, require_interaction, blocked
 
 router = APIRouter(prefix="/api", tags=["招募与申请"])
 
-MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024
-ATTACHMENT_TYPES = {
-    ".pdf": "application/pdf",
-    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".txt": "text/plain; charset=utf-8",
-}
 
 
 def attachment_for_post(db, attachment_id, user, post_id=None):
@@ -59,32 +48,7 @@ def validate_attachments(db, extras, user, post_id=None, legacy_id=None):
 
 @router.post("/attachments", status_code=201)
 def upload_attachment(data: AttachmentUpload, user=Depends(student), db=Depends(get_db)):
-    filename = data.filename.strip()
-    if filename in (".", "..") or any(c in filename for c in "/\\\r\n\x00"):
-        raise HTTPException(422, "文件名无效")
-    suffix = PurePath(filename).suffix.lower()
-    if suffix not in ATTACHMENT_TYPES:
-        raise HTTPException(422, "仅支持 PDF、DOCX、PNG、JPG 和 TXT 文件")
-    try:
-        content = base64.b64decode(data.content_base64, validate=True)
-    except (binascii.Error, ValueError):
-        raise HTTPException(422, "文件内容无效")
-    if not content or len(content) > MAX_ATTACHMENT_SIZE:
-        raise HTTPException(422, "附件大小需在 5 MB 以内")
-    if suffix == ".txt":
-        try:
-            valid = bool(content.decode("utf-8").strip()) and b"\x00" not in content
-        except UnicodeDecodeError:
-            valid = False
-    else:
-        valid = (
-            content.startswith(b"%PDF-") if suffix == ".pdf" else
-            content.startswith(b"PK\x03\x04") if suffix == ".docx" else
-            content.startswith(b"\x89PNG\r\n\x1a\n") if suffix == ".png" else
-            content.startswith(b"\xff\xd8\xff")
-        )
-    if not valid:
-        raise HTTPException(422, "文件内容与格式不符")
+    filename, content_type, content = decode_attachment(data)
     referenced = set()
     for row in db.execute("SELECT payload FROM drafts WHERE user_id=?", (user["id"],)):
         payload = json.loads(row["payload"])
@@ -105,7 +69,7 @@ def upload_attachment(data: AttachmentUpload, user=Depends(student), db=Depends(
             db.execute("DELETE FROM attachments WHERE id=?", (row["id"],))
     attachment_id = db.execute(
         "INSERT INTO attachments(owner_id,filename,content_type,content,created_at) VALUES(?,?,?,?,?)",
-        (user["id"], filename, ATTACHMENT_TYPES[suffix], content, now()),
+        (user["id"], filename, content_type, content, now()),
     ).lastrowid
     return {"id": attachment_id, "filename": filename, "size": len(content)}
 

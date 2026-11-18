@@ -40,6 +40,8 @@ def migrate(db):
     and are therefore created on every startup for both fresh and legacy databases.
     """
     existing = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
+    if "resources" not in existing:
+        db.execute("ALTER TABLE users ADD COLUMN resources TEXT NOT NULL DEFAULT '[]'")
     if "is_admin" not in existing:
         db.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
     if "avatar_path" not in existing:

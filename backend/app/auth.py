@@ -84,6 +84,7 @@ def public_user(user):
 def own_user(user):
     return {
         **public_user(user),
+        "resources": json.loads(user["resources"]),
         **{
             k: user[k]
             for k in (

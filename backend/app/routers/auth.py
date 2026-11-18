@@ -12,7 +12,8 @@ from ..auth import (
     verify_password,
     token_hash,
 )
-from ..schemas import Login, Profile
+from ..schemas import Login, Profile, AttachmentUpload
+from ..attachments import decode_attachment
 
 router = APIRouter(prefix="/api/auth", tags=["账户"])
 DUMMY_HASH = hash_password("constant-time-fallback")
@@ -84,6 +85,28 @@ def me(user=Depends(current_user)):
 
 @router.patch("/me")
 def update_profile(data: Profile, user=Depends(student), db=Depends(get_db)):
+    if data.resources is not None:
+        resources = []
+        ids = set()
+        for item in data.resources:
+            resource = item.model_dump()
+            if item.type == "attachment":
+                row = db.execute(
+                    "SELECT filename FROM profile_attachments WHERE id=? AND owner_id=?",
+                    (item.attachment_id, user["id"]),
+                ).fetchone()
+                if not row or item.attachment_id in ids:
+                    raise HTTPException(422, "附件不存在、无权使用或被重复引用")
+                ids.add(item.attachment_id)
+                resource["filename"] = row["filename"]
+            resources.append(resource)
+        previous_ids = {
+            item["attachment_id"] for item in json.loads(user["resources"])
+            if item["type"] == "attachment"
+        }
+        for attachment_id in previous_ids - ids:
+            db.execute("DELETE FROM profile_attachments WHERE id=? AND owner_id=?", (attachment_id, user["id"]))
+        db.execute("UPDATE users SET resources=? WHERE id=?", (json.dumps(resources, ensure_ascii=False), user["id"]))
     db.execute(
         "UPDATE users SET name=?,dept=?,year=?,bio=?,tags=?,searchable=?,public_posts=?,public_teams=? WHERE id=?",
         (
@@ -101,3 +124,23 @@ def update_profile(data: Profile, user=Depends(student), db=Depends(get_db)):
     return own_user(
         db.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
     )
+
+
+@router.post("/me/attachments", status_code=201)
+def upload_profile_attachment(data: AttachmentUpload, user=Depends(student), db=Depends(get_db)):
+    filename, content_type, content = decode_attachment(data)
+    saved_ids = {
+        item["attachment_id"] for item in json.loads(user["resources"])
+        if item["type"] == "attachment"
+    }
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    for row in db.execute(
+        "SELECT id FROM profile_attachments WHERE owner_id=? AND created_at<?", (user["id"], cutoff)
+    ).fetchall():
+        if row["id"] not in saved_ids:
+            db.execute("DELETE FROM profile_attachments WHERE id=?", (row["id"],))
+    attachment_id = db.execute(
+        "INSERT INTO profile_attachments(owner_id,filename,content_type,content,created_at) VALUES(?,?,?,?,?)",
+        (user["id"], filename, content_type, content, now()),
+    ).lastrowid
+    return {"id": attachment_id, "filename": filename, "size": len(content)}

@@ -1,4 +1,7 @@
+import json
+from urllib.parse import quote
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi.responses import Response
 from ..db import get_db, get_db_readonly, now
 from ..auth import current_user, student, public_user
 from ..schemas import Message
@@ -37,6 +40,7 @@ def person(person_id: int, user=Depends(verified_viewer), db=Depends(get_db_read
     # Public profile intentionally never includes application records or private material.
     return {
         **public_user(person),
+        "resources": json.loads(person["resources"]),
         "public_posts": bool(person["public_posts"]),
         "public_teams": bool(person["public_teams"]),
         "posts": [
@@ -57,6 +61,28 @@ def person(person_id: int, user=Depends(verified_viewer), db=Depends(get_db_read
         if person["public_teams"]
         else None,
     }
+
+
+@router.get("/people/{person_id}/attachments/{attachment_id}")
+def profile_attachment(person_id: int, attachment_id: int, user=Depends(verified_viewer), db=Depends(get_db_readonly)):
+    person = db.execute(
+        "SELECT resources FROM users WHERE id=? AND verified=1 AND banned=0 AND deleted_at IS NULL", (person_id,)
+    ).fetchone()
+    if not person or not any(
+        item["type"] == "attachment" and item["attachment_id"] == attachment_id
+        for item in json.loads(person["resources"])
+    ):
+        raise HTTPException(404, "附件不存在")
+    row = db.execute(
+        "SELECT filename,content FROM profile_attachments WHERE id=? AND owner_id=?", (attachment_id, person_id)
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "附件不存在")
+    return Response(content=row["content"], media_type="application/octet-stream", headers={
+        "Content-Disposition": "attachment; filename*=UTF-8''" + quote(row["filename"]),
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "no-store",
+    })
 
 
 @router.get('/notices')

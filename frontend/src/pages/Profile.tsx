@@ -2,17 +2,20 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { uploadAvatar, removeAvatar, write } from '../api';
 import { useSession } from '../context';
-import type { User } from '../types';
+import type { User, ProfileResource } from '../types';
+import { ProfileResources } from '../components/ProfileResources';
 import { Header, Field, ErrorNote, Modal, Avatar, tagsFrom } from '../components/ui';
 export function Profile({ settings = false }: { settings?: boolean }) {
   const { user, setUser, toast } = useSession();
   const navigate = useNavigate();
+  const [uploading, setUploading] = useState(false);
   // 初始值用空字段兜底，避免 user 为 null 时崩溃；真实数据由下方 useEffect 填充。
   const [form, setForm] = useState(() => ({
     name: '',
     dept: '',
     year: '',
     bio: '',
+    resources: [] as ProfileResource[],
     tags: [] as string[],
     searchable: true,
     public_posts: true,
@@ -30,12 +33,14 @@ export function Profile({ settings = false }: { settings?: boolean }) {
       dept: user.dept ?? '',
       year: user.year ?? '',
       bio: user.bio ?? '',
+      resources: user.resources ?? [],
       tags: user.tags ?? [],
       searchable: !!user.searchable,
       public_posts: !!user.public_posts,
       public_teams: !!user.public_teams,
     });
     setTagsText((user.tags ?? []).join(', '));
+    setUploading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
   const [error, setError] = useState('');
@@ -133,10 +138,17 @@ export function Profile({ settings = false }: { settings?: boolean }) {
         className="panel"
         onSubmit={async (e) => {
           e.preventDefault();
+          if (uploading) return;
           setBusy(true);
           setError('');
           try {
-            setUser(await write<User>('/auth/me', 'PATCH', form));
+            const payload = {
+              ...form,
+              resources: settings
+                ? undefined
+                : form.resources.map(({ filename: _filename, ...item }) => item),
+            };
+            setUser(await write<User>('/auth/me', 'PATCH', payload));
             toast('资料已保存');
           } catch (e) {
             setError((e as Error).message);
@@ -165,7 +177,7 @@ export function Profile({ settings = false }: { settings?: boolean }) {
               </label>
             ))}
             <p className="small muted" style={{ margin: '16px 0' }}>
-              申请记录及补充资料始终保持私有。
+              申请记录及申请补充资料始终保持私有。主动添加到个人主页的网页和附件会向认证同学展示。
             </p>
           </>
         ) : (
@@ -200,10 +212,17 @@ export function Profile({ settings = false }: { settings?: boolean }) {
                 onChange={(e) => setForm({ ...form, bio: e.target.value })}
               />
             </Field>
+            <ProfileResources
+              key={user!.id}
+              value={form.resources}
+              onChange={(resources) => setForm((current) => ({ ...current, resources }))}
+              busy={busy}
+              onUploading={setUploading}
+            />
           </>
         )}
         <ErrorNote error={error} />
-        <button className="btn" disabled={busy}>
+        <button className="btn" disabled={busy || uploading}>
           {busy ? '保存中…' : '保存' + (settings ? '设置' : '资料')}
         </button>
       </form>

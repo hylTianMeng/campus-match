@@ -49,24 +49,6 @@ class TakedownPost(Input):
     reason: str = Field(min_length=1, max_length=1000)
 
 
-class Profile(Input):
-    name: str = Field(min_length=1, max_length=40)
-    dept: str = Field(default="", max_length=80)
-    year: str = Field(default="", max_length=40)
-    bio: str = Field(default="", max_length=2000)
-    tags: List[str] = Field(default_factory=list, max_length=20)
-    searchable: bool = True
-    public_posts: bool = True
-    public_teams: bool = False
-
-    @field_validator("tags")
-    @classmethod
-    def valid_tags(cls, values):
-        if any(not v.strip() or len(v) > 40 for v in values):
-            raise ValueError("标签长度为 1–40 个字符")
-        return list(dict.fromkeys(v.strip() for v in values))
-
-
 class Role(Input):
     name: str = Field(min_length=1, max_length=80)
     capacity: int = Field(ge=1, le=100)
@@ -98,6 +80,29 @@ class InformationItem(Input):
                 if parsed.scheme not in ("http", "https") or not parsed.netloc:
                     raise ValueError("链接仅支持完整的 http / https 地址")
         return self
+
+
+class ProfileResource(InformationItem):
+    type: Literal["link", "attachment"]
+
+
+class Profile(Input):
+    name: str = Field(min_length=1, max_length=40)
+    dept: str = Field(default="", max_length=80)
+    year: str = Field(default="", max_length=40)
+    bio: str = Field(default="", max_length=2000)
+    tags: List[str] = Field(default_factory=list, max_length=20)
+    searchable: bool = True
+    public_posts: bool = True
+    public_teams: bool = False
+    resources: Optional[List[ProfileResource]] = Field(default=None, max_length=20)
+
+    @field_validator("tags")
+    @classmethod
+    def valid_tags(cls, values):
+        if any(not v.strip() or len(v) > 40 for v in values):
+            raise ValueError("标签长度为 1–40 个字符")
+        return list(dict.fromkeys(v.strip() for v in values))
 
 
 class Extras(Input):

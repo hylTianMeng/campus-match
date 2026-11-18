@@ -3,7 +3,7 @@ INSERT OR IGNORE INTO schema_version VALUES(2);
 CREATE TABLE IF NOT EXISTS users(
  id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
  name TEXT NOT NULL, dept TEXT NOT NULL DEFAULT '', year TEXT NOT NULL DEFAULT '',
- bio TEXT NOT NULL DEFAULT '', tags TEXT NOT NULL DEFAULT '[]',
+ bio TEXT NOT NULL DEFAULT '', tags TEXT NOT NULL DEFAULT '[]', resources TEXT NOT NULL DEFAULT '[]',
  verified INTEGER NOT NULL DEFAULT 0, banned INTEGER NOT NULL DEFAULT 0,
  searchable INTEGER NOT NULL DEFAULT 1, public_posts INTEGER NOT NULL DEFAULT 1,
  public_teams INTEGER NOT NULL DEFAULT 0,
@@ -61,6 +61,12 @@ CREATE TABLE IF NOT EXISTS attachments(
  created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS attachments_post ON attachments(post_id);
+CREATE TABLE IF NOT EXISTS profile_attachments(
+ id INTEGER PRIMARY KEY, owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ filename TEXT NOT NULL, content_type TEXT NOT NULL, content BLOB NOT NULL,
+ created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS profile_attachments_owner ON profile_attachments(owner_id);
 CREATE TABLE IF NOT EXISTS favorites(
  user_id INTEGER NOT NULL REFERENCES users(id), post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
  PRIMARY KEY(user_id,post_id)

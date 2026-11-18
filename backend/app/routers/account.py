@@ -230,6 +230,8 @@ def delete_account(
     )
     if user["avatar_path"]:
         (AVATAR_DIR / user["avatar_path"]).unlink(missing_ok=True)
+    db.execute("UPDATE users SET resources='[]' WHERE id=?", (user["id"],))
+    db.execute("DELETE FROM profile_attachments WHERE owner_id=?", (user["id"],))
     db.execute("DELETE FROM sessions WHERE user_id=?", (user["id"],))
     response.delete_cookie("campus_session", path="/")
     return {"ok": True}
