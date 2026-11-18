@@ -376,7 +376,7 @@ def test_real_legacy_schema_migration_preserves_records(tmp_path, monkeypatch):
     path = tmp_path / "legacy.sqlite3"
     monkeypatch.setenv("DATABASE_PATH", str(path))
     with sqlite3.connect(path) as db:
-        db.executescript((Path(__file__).parents[1] / "app/schema.sql").read_text())
+        db.executescript((Path(__file__).parents[1] / "app/schema.sql").read_text(encoding="utf-8"))
         db.execute(
             "INSERT INTO users(id,email,password_hash,name) VALUES(1,'legacy@example.test','hash','历史用户')"
         )

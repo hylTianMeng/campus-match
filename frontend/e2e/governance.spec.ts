@@ -37,7 +37,8 @@ test('personal message deletion, hiding, sharing and bilateral messaging restric
   await chen.getByLabel('分享我的招募').selectOption(String(post.id));
   await chen.getByRole('button', { name: '发送', exact: true }).click();
   await expect(chen.locator('.message').last().getByRole('link')).toBeVisible();
-  await chen.getByRole('button', { name: '删除', exact: true }).last().click();
+  await chen.getByRole('button', { name: '消息操作', exact: true }).last().click();
+  await chen.getByRole('menuitem', { name: '删除', exact: true }).click();
   await chen.getByRole('button', { name: '确认删除消息' }).click();
   await expect(chen.getByRole('heading', { name: '还没有消息' })).toBeVisible();
   await shen.goto('/#/chats?peer=2');
@@ -93,7 +94,8 @@ test('message report → audited evidence → moderation → private notificatio
   await sender.getByRole('button', { name: '发送', exact: true }).click();
   await expect(sender.locator('.message').last()).toContainText('需要人工核实的消息');
   await reporter.goto('/#/chats?peer=4');
-  await reporter.getByRole('button', { name: '举报消息', exact: true }).last().click();
+  await reporter.getByRole('button', { name: '消息操作', exact: true }).last().click();
+  await reporter.getByRole('button', { name: '举报', exact: true }).click();
   await reporter.getByLabel('举报理由').fill('内部证据：需要人工核实的消息');
   await reporter.getByRole('button', { name: '提交举报', exact: true }).click();
   await expect(reporter.getByRole('status')).toContainText('举报已提交');
@@ -103,7 +105,7 @@ test('message report → audited evidence → moderation → private notificatio
   ).toBeVisible();
   await expect(admin.getByText('内部证据：需要人工核实的消息', { exact: false })).toHaveCount(0);
   await admin.getByRole('link', { name: '填写原因后查看会话证据' }).click();
-  await admin.getByLabel('查看原因').fill('核实具体举报');
+  await admin.getByLabel('访问原因*', { exact: true }).fill('核实具体举报');
   await admin.getByRole('button', { name: '记录审计并查看' }).click();
   await expect(admin.getByText('需要人工核实的消息', { exact: true })).toBeVisible();
   await expect(
@@ -116,7 +118,7 @@ test('message report → audited evidence → moderation → private notificatio
   await admin.getByLabel('处理方式').selectOption('ban');
   await admin.getByLabel('核实结论与内部原因').fill('确认，内部证据来自举报人');
   await admin.getByRole('button', { name: '确认处理', exact: true }).click();
-  await expect(admin.getByRole('status')).toContainText('举报处理已完成');
+  await expect(admin.getByRole('status').filter({ hasText: '举报处理已完成' })).toBeVisible();
   await reporter.goto('/#/reports');
   await expect(reporter.getByText('已处理', { exact: true })).toBeVisible();
   await sender.goto('/#/notices');
@@ -158,7 +160,7 @@ test('post report → take down → paused application → restore with history'
   await admin.getByLabel('处理方式').selectOption('take-down');
   await admin.getByLabel('核实结论与内部原因').fill('活动说明待修正');
   await admin.getByRole('button', { name: '确认处理', exact: true }).click();
-  await expect(admin.getByRole('status')).toContainText('举报处理已完成');
+  await expect(admin.getByRole('status').filter({ hasText: '举报处理已完成' })).toBeVisible();
   await owner.goto('/#/detail/' + post.id);
   await expect(owner.getByText('该招募当前暂停申请与审核，历史记录保留。')).toBeVisible();
   await reporter.goto('/#/detail/' + post.id);

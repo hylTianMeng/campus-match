@@ -841,3 +841,312 @@ def test_draft_copy_duplicates_payload_with_suffix(client):
     # 不能复制他人的草稿
     login(client, "shen")
     assert client.post(f"/api/drafts/{draft['id']}/copy", json={}).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# D 模块扩展：组队成功后的临时群聊
+# ---------------------------------------------------------------------------
+
+
+def accept_into(client, owner="chen", applicant="shen"):
+    """发布招募 → 申请 → 录取，返回 (post, application_id)。"""
+    login(client, owner)
+    post = new_post(client)
+    login(client, applicant)
+    app_id = apply(client, post)
+    login(client, owner)
+    result = decision(client, app_id, "accept")
+    assert result.status_code == 200, result.text
+    return post, app_id
+
+
+def group_of(client):
+    chats = client.get("/api/chats").json()
+    assert chats, "应已创建群聊"
+    return chats[0]
+
+
+def test_group_chat_created_on_accept_and_messaging_flow(client):
+    post, _app = accept_into(client)
+    # 发布者与录取者都进入群聊
+    login(client, "chen")
+    chat = group_of(client)
+    assert chat["title"] == post["title"] and chat["unread_count"] == 0
+    login(client, "shen")
+    chat = group_of(client)
+    chat_id = chat["id"]
+    info = client.get(f"/api/chats/{chat_id}/info").json()
+    assert info["post_id"] == post["id"] and info["can_delete"] is False
+    assert len(info["members"]) == 2
+    assert any(m["is_owner"] and m["name"] == "陈书宁" for m in info["members"])
+    # 成员互发消息、已读水位、未读计数
+    assert client.post(f"/api/chats/{chat_id}", json={"body": "大家好"}).status_code == 201
+    login(client, "chen")
+    chats = client.get("/api/chats").json()
+    assert chats[0]["unread_count"] == 1 and chats[0]["last_body"] == "大家好"
+    unread = client.get("/api/unread").json()
+    assert unread["chats"] == 1 and unread["total"] >= 1
+    messages = client.get(f"/api/chats/{chat_id}/messages").json()
+    assert len(messages) == 1 and messages[0]["sender_name"] == "沈亦舟"
+    assert client.post(f"/api/chats/{chat_id}/read", json={}).status_code == 200
+    assert client.get("/api/unread").json()["chats"] == 0
+    # 非成员与未登录不可见
+    login(client, "zhou")
+    assert client.get(f"/api/chats/{chat_id}/info").status_code == 403
+    assert client.post(f"/api/chats/{chat_id}", json={"body": "蹭"}).status_code == 403
+    assert client.get("/api/chats").json() == []
+
+
+def test_group_chat_delete_requires_ended_recruitment(client):
+    accept_into(client)
+    login(client, "shen")
+    chat_id = group_of(client)["id"]
+    # 招募未结束：删除入口存在但未生效，返回固定提示
+    result = client.delete(f"/api/chats/{chat_id}")
+    assert result.status_code == 409
+    assert result.json()["detail"] == "由于该群聊对应招募还未结束，无法删除"
+    # 群聊仍在列表中
+    assert client.get("/api/chats").json()
+
+
+def end_recruitment(client, post_id):
+    """把截止时间改到过去，触发到期清扫使招募结束。"""
+    with connect() as db:
+        db.execute(
+            "UPDATE posts SET deadline=? WHERE id=?",
+            ((datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(), post_id),
+        )
+    assert client.get(f"/api/posts/{post_id}").json()["end_reason"] == "expired"
+
+
+def test_group_chat_full_delete_retention_and_admin_audit_and_purge(client):
+    post, _app = accept_into(client)
+    login(client, "chen")
+    chat_id = group_of(client)["id"]
+    assert client.post(f"/api/chats/{chat_id}", json={"body": "欢迎加入"}).status_code == 201
+    end_recruitment(client, post["id"])
+    login(client, "shen")
+    assert client.get(f"/api/chats/{chat_id}/info").json()["can_delete"] is True
+    assert client.delete(f"/api/chats/{chat_id}").status_code == 200
+    login(client, "chen")
+    # 发布者不能删除群聊，只能解散（解散等效于发布者这边的删除）
+    result = client.delete(f"/api/chats/{chat_id}")
+    assert result.status_code == 409 and "解散" in result.json()["detail"]
+    assert client.post(f"/api/chats/{chat_id}/dissolve", json={}).status_code == 200
+    # 全员删除：普通成员不可见，进入 7 天保留期
+    for name in ("chen", "shen"):
+        login(client, name)
+        assert client.get("/api/chats").json() == []
+        assert client.get(f"/api/chats/{chat_id}/info").status_code == 404
+    # 管理员在保留期内仍可审计查看
+    login(client, "lin")
+    listed = client.get("/api/admin/chats", params={"q": post["title"]}).json()
+    assert listed and listed[0]["status"] == "retention" and listed[0]["retention_until"]
+    audit = client.post(f"/api/admin/chats/{chat_id}/access", json={"reason": "核查群聊举报"}).json()
+    assert audit["audit"]["chat_id"] == chat_id
+    assert [m["body"] for m in audit["messages"]] == ["欢迎加入"]
+    paged = client.get(f"/api/admin/chats/access/{audit['audit']['id']}").json()
+    assert paged and paged[0]["sender_name"] == "陈书宁"
+    assert client.get("/api/admin/chat-audits").json()[0]["chat_id"] == chat_id
+    # 无理由不能开审计
+    assert client.post(f"/api/admin/chats/{chat_id}/access", json={"reason": ""}).status_code == 422
+    # 保留期到期 → 清库
+    with connect() as db:
+        db.execute(
+            "UPDATE group_chats SET retention_until=? WHERE id=?",
+            ((datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(), chat_id),
+        )
+    assert client.get("/api/posts").status_code == 200  # 触发清扫
+    login(client, "lin")
+    assert client.get("/api/admin/chats", params={"q": post["title"]}).json() == []
+    assert client.post(f"/api/admin/chats/{chat_id}/access", json={"reason": "复查"}).status_code == 404
+    with connect() as db:
+        assert db.execute("SELECT count(*) FROM chat_messages WHERE chat_id=?", (chat_id,)).fetchone()[0] == 0
+        # 审计留痕不随群聊清库删除
+        assert db.execute("SELECT count(*) FROM chat_access_audits WHERE chat_id=?", (chat_id,)).fetchone()[0] >= 1
+
+
+def test_revoke_give_up_and_ban_update_membership(client):
+    post, app_id = accept_into(client)
+    login(client, "shen")
+    chat_id = group_of(client)["id"]
+    # 撤销录取 → 移出群聊
+    login(client, "chen")
+    assert decision(client, app_id, "revoke").status_code == 200
+    login(client, "shen")
+    assert client.get("/api/chats").json() == []
+    assert client.get(f"/api/chats/{chat_id}/info").status_code == 403
+    # 重新录取恢复成员资格；封禁自动禁言、解封恢复
+    login(client, "shen")
+    app_id2 = apply(client, post)
+    login(client, "chen")
+    assert decision(client, app_id2, "accept").status_code == 200
+    with connect() as db:
+        user_id = db.execute("SELECT id FROM users WHERE email='shen@example.test'").fetchone()["id"]
+    login(client, "lin")
+    assert client.post(f"/api/admin/users/{user_id}/ban", json={"reason": "测试封禁"}).status_code == 200
+    with connect() as db:
+        assert db.execute(
+            "SELECT muted FROM chat_members WHERE chat_id=? AND user_id=?", (chat_id, user_id)
+        ).fetchone()["muted"] == 1
+    assert client.post(f"/api/admin/users/{user_id}/unban", json={"reason": "测试解封"}).status_code == 200
+    with connect() as db:
+        assert db.execute(
+            "SELECT muted FROM chat_members WHERE chat_id=? AND user_id=?", (chat_id, user_id)
+        ).fetchone()["muted"] == 0
+    # 放弃录取同样退群
+    login(client, "shen")
+    assert client.post(f"/api/applications/{app_id2}/decision", json={"action": "give-up", "reason": "测试放弃"}).status_code == 200
+    assert client.get("/api/chats").json() == []
+
+
+def test_owner_dissolve_and_scatter_after_countdown(client):
+    post, _app = accept_into(client)
+    login(client, "shen")
+    chat_id = group_of(client)["id"]
+    # 发布者解散后群聊转只读；解散对发布者等效于删除（从其消息中心移除）
+    login(client, "chen")
+    assert client.post(f"/api/chats/{chat_id}/dissolve", json={}).status_code == 200
+    assert client.get("/api/chats").json() == []
+    assert client.post(f"/api/chats/{chat_id}/dissolve", json={}).status_code == 403
+    assert client.get(f"/api/chats/{chat_id}/info").status_code == 403
+    login(client, "shen")
+    info = client.get(f"/api/chats/{chat_id}/info").json()
+    assert info["dissolved"] is True and info["read_only"] is True and info["can_send"] is False
+    assert client.post(f"/api/chats/{chat_id}", json={"body": "还想说"}).status_code == 409
+    notices = client.get("/api/notices").json()
+    assert any("已由发布者解散" in n["body"] for n in notices)
+    # 招募结束满 7 天：自动遣散（未解散的群聊走 sweep）
+    post2, _app2 = accept_into(client)
+    chat2_id = group_of(client)["id"]
+    end_recruitment(client, post2["id"])
+    with connect() as db:
+        db.execute(
+            "UPDATE posts SET updated_at=? WHERE id=?",
+            ((datetime.now(timezone.utc) - timedelta(days=8)).isoformat(), post2["id"]),
+        )
+    assert client.get("/api/posts").status_code == 200  # 触发清扫
+    login(client, "shen")
+    info = client.get(f"/api/chats/{chat2_id}/info").json()
+    assert info["read_only"] is True and info["dissolved"] is False
+    notices = client.get("/api/notices").json()
+    assert any("已遣散" in n["body"] for n in notices)
+
+
+def test_chat_message_report_with_audited_evidence(client):
+    post, _app = accept_into(client)
+    login(client, "chen")
+    chat_id = group_of(client)["id"]
+    assert client.post(f"/api/chats/{chat_id}", json={"body": "违规内容示例"}).status_code == 201
+    login(client, "shen")
+    message_id = client.get(f"/api/chats/{chat_id}/messages").json()[0]["id"]
+    report = client.post(
+        "/api/reports",
+        json={"target_type": "chat_message", "target_id": message_id, "reason": "群聊中发布不当内容"},
+    )
+    assert report.status_code == 201, report.text
+    login(client, "lin")
+    reports = client.get("/api/admin/reports").json()
+    target = next(r for r in reports if r["target_type"] == "chat_message")
+    assert "群聊访问审计" in target["reason"]  # 未审计前不暴露举报内容
+    # 审计后可查看举报原文
+    audit = client.post(f"/api/admin/chats/{chat_id}/access", json={"reason": "核查群聊举报"}).json()
+    evidence = client.get(
+        f"/api/admin/reports/{target['id']}/evidence", params={"audit_id": audit["audit"]["id"]}
+    )
+    assert evidence.status_code == 200 and evidence.json()["reason"] == "群聊中发布不当内容"
+
+
+def test_chat_message_single_side_delete(client):
+    """成员单方面删除消息：仅自己不可见，他人与管理员视角不受影响。"""
+    post, _app = accept_into(client)
+    login(client, "chen")
+    chat_id = group_of(client)["id"]
+    assert client.post(f"/api/chats/{chat_id}", json={"body": "待删除消息"}).status_code == 201
+    login(client, "shen")
+    message_id = client.get(f"/api/chats/{chat_id}/messages").json()[0]["id"]
+    assert client.delete(f"/api/chats/{chat_id}/messages/{message_id}").status_code == 200
+    # 本人不再看到
+    assert client.get(f"/api/chats/{chat_id}/messages").json() == []
+    # 重复删除幂等
+    assert client.delete(f"/api/chats/{chat_id}/messages/{message_id}").status_code == 200
+    # 未读计数与最后一条消息预览均排除本人已删消息（与铃铛 /unread 同口径）
+    unread = client.get("/api/unread").json()
+    assert unread["chats"] == 0
+    chats = client.get("/api/chats").json()
+    assert chats[0]["last_body"] is None and chats[0]["unread_count"] == 0
+    # 其他成员仍可见
+    login(client, "chen")
+    rows = client.get(f"/api/chats/{chat_id}/messages").json()
+    assert [m["id"] for m in rows] == [message_id]
+    # 管理员审计视角仍可见全部
+    login(client, "lin")
+    audit = client.post(f"/api/admin/chats/{chat_id}/access", json={"reason": "核查"}).json()
+    assert [m["id"] for m in audit["messages"]] == [message_id]
+    # 不存在的消息（成员视角 404）
+    login(client, "shen")
+    assert client.delete(f"/api/chats/{chat_id}/messages/99999").status_code == 404
+
+
+def test_chat_message_single_side_delete(client):
+    """成员单方面删除消息：仅自己不可见，他人与管理员视角不受影响。"""
+    post, _app = accept_into(client)
+    login(client, "chen")
+    chat_id = group_of(client)["id"]
+    assert client.post(f"/api/chats/{chat_id}", json={"body": "待删除消息"}).status_code == 201
+    login(client, "shen")
+    message_id = client.get(f"/api/chats/{chat_id}/messages").json()[0]["id"]
+    assert client.delete(f"/api/chats/{chat_id}/messages/{message_id}").status_code == 200
+    # 本人不再看到
+    assert client.get(f"/api/chats/{chat_id}/messages").json() == []
+    # 重复删除幂等
+    assert client.delete(f"/api/chats/{chat_id}/messages/{message_id}").status_code == 200
+    # 未读计数与最后一条消息预览均排除本人已删消息（与铃铛 /unread 同口径）
+    unread = client.get("/api/unread").json()
+    assert unread["chats"] == 0
+    chats = client.get("/api/chats").json()
+    assert chats[0]["last_body"] is None and chats[0]["unread_count"] == 0
+    # 其他成员仍可见
+    login(client, "chen")
+    rows = client.get(f"/api/chats/{chat_id}/messages").json()
+    assert [m["id"] for m in rows] == [message_id]
+    # 管理员审计视角仍可见全部
+    login(client, "lin")
+    audit = client.post(f"/api/admin/chats/{chat_id}/access", json={"reason": "核查"}).json()
+    assert [m["id"] for m in audit["messages"]] == [message_id]
+    # 不存在的消息（成员视角 404）
+    login(client, "shen")
+    assert client.delete(f"/api/chats/{chat_id}/messages/99999").status_code == 404
+
+
+def test_chat_full_time_and_admin_force_dissolve(client):
+    """满员时间在招募结束后由清扫补记；管理员须先审核查看才能强制解散。"""
+    post, _app = accept_into(client)
+    login(client, "chen")
+    chat_id = group_of(client)["id"]
+    info = client.get(f"/api/chats/{chat_id}/info").json()
+    assert info["full_at"] is None and info["scatter_at"] is None
+    assert info["members"][0]["role_name"] == "发布者" and info["members"][0]["is_owner"]
+    assert info["members"][1]["role_name"] == "岗位0"
+    end_recruitment(client, post["id"])
+    info = client.get(f"/api/chats/{chat_id}/info").json()
+    assert info["full_at"] and info["scatter_at"]
+    # 未审核不能强制解散
+    login(client, "lin")
+    assert client.post(f"/api/admin/chats/{chat_id}/dissolve", json={}).status_code == 403
+    listed = client.get("/api/admin/chats", params={"q": post["title"]}).json()
+    row = listed[0]
+    assert row["owner_name"] and row["full_at"] and row["scatter_at"]
+    assert row["members"][0]["role_name"] == "发布者"
+    # 审核后可强制解散；成员收到通知
+    client.post(f"/api/admin/chats/{chat_id}/access", json={"reason": "核查后解散"})
+    assert client.post(f"/api/admin/chats/{chat_id}/dissolve", json={}).status_code == 200
+    assert client.post(f"/api/admin/chats/{chat_id}/dissolve", json={}).status_code == 409
+    listed = client.get("/api/admin/chats", params={"q": post["title"]}).json()
+    assert listed[0]["status"] == "dissolved" and listed[0]["dissolved_at"]
+    login(client, "shen")
+    info = client.get(f"/api/chats/{chat_id}/info").json()
+    assert info["dissolved"] is True and info["read_only"] is True
+    assert client.post(f"/api/chats/{chat_id}", json={"body": "x"}).status_code == 409
+    notices = client.get("/api/notices").json()
+    assert any("管理员解散" in n["body"] for n in notices)

@@ -4,7 +4,7 @@ import os
 import sqlite3
 import threading
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 DEFAULT_DB = Path(__file__).resolve().parents[1] / "data" / "campuscrew.sqlite3"
 
@@ -65,7 +65,7 @@ def init_db():
             # WAL transition holds a write lock, and leaving it pending makes a
             # concurrent startup fail with "attempt to write a readonly database".
             db.commit()
-            db.executescript((Path(__file__).parent / "schema.sql").read_text())
+            db.executescript((Path(__file__).parent / "schema.sql").read_text(encoding="utf-8"))
             # C 模块（招募）迁移：附件索引、角色 accepting 标记、帖子 updated_at。
             db.execute("DROP INDEX IF EXISTS one_attachment_per_post")
             if "accepting" not in {row["name"] for row in db.execute("PRAGMA table_info(roles)")}:
@@ -83,6 +83,8 @@ def init_db():
                 "messages": {"client_id": "TEXT"},
                 "notices": {"event_key": "TEXT", "kind": "TEXT NOT NULL DEFAULT 'business'",
                             "target_path": "TEXT NOT NULL DEFAULT ''"},
+                "group_chats": {"full_at": "TEXT"},
+                "chat_members": {"role_name": "TEXT NOT NULL DEFAULT ''"},
             }
             for table, columns in additions.items():
                 existing = {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}
@@ -91,7 +93,31 @@ def init_db():
                         db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS message_request_key ON messages(sender_id,client_id) WHERE client_id IS NOT NULL")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS notice_event_key ON notices(user_id,event_key) WHERE event_key IS NOT NULL")
-            db.executescript((Path(__file__).parent / "governance.sql").read_text())
+            # 群聊举报：旧库的 reports 表 CHECK 约束不含 chat_message，需整表重建。
+            reports_sql = db.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='reports'"
+            ).fetchone()
+            if reports_sql and "chat_message" not in reports_sql["sql"]:
+                db.executescript(
+                    """
+                    CREATE TABLE reports_rebuilt(
+                        id INTEGER PRIMARY KEY, reporter_id INTEGER NOT NULL REFERENCES users(id),
+                        target_type TEXT NOT NULL CHECK(target_type IN ('post','user','message','chat_message')),
+                        target_id INTEGER NOT NULL,
+                        subject_user_id INTEGER NOT NULL REFERENCES users(id), post_id INTEGER,
+                        reason TEXT NOT NULL, target_summary TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','resolved','dismissed')),
+                        resolution TEXT NOT NULL DEFAULT '', action TEXT NOT NULL DEFAULT '',
+                        admin_id INTEGER REFERENCES users(id), created_at TEXT NOT NULL, resolved_at TEXT
+                    );
+                    INSERT INTO reports_rebuilt SELECT * FROM reports;
+                    DROP TABLE reports;
+                    ALTER TABLE reports_rebuilt RENAME TO reports;
+                    CREATE UNIQUE INDEX IF NOT EXISTS one_pending_report
+                        ON reports(reporter_id,target_type,target_id) WHERE status='pending';
+                    """
+                )
+            db.executescript((Path(__file__).parent / "governance.sql").read_text(encoding="utf-8"))
             # Normalize the earlier develop representation without discarding applications.
             post_columns = {row["name"] for row in db.execute("PRAGMA table_info(posts)")}
             if {"status", "end_reason"} <= post_columns:
@@ -106,6 +132,7 @@ def get_db():
         with WRITE_LOCK:
             db.execute("BEGIN IMMEDIATE")
             expire_posts(db)
+            sweep_group_chats(db)
             yield db
             db.commit()
     except Exception:
@@ -144,10 +171,18 @@ def get_db_readonly():
     try:
         if db.execute(
             "SELECT 1 FROM posts WHERE status='open' AND deadline<=?", (now(),)
+        ).fetchone() or db.execute(
+            "SELECT 1 FROM group_chats WHERE retention_until IS NOT NULL AND retention_until<=?", (now(),)
+        ).fetchone() or db.execute(
+            """SELECT 1 FROM group_chats c JOIN posts p ON p.id=c.post_id
+               WHERE c.read_only=0 AND c.dissolved_at IS NULL AND c.retention_until IS NULL
+               AND p.status='ended' AND p.updated_at<>'' AND p.updated_at<=?""",
+            ((datetime.now(timezone.utc) - timedelta(days=7)).isoformat(),),
         ).fetchone():
             with WRITE_LOCK:
                 db.execute("BEGIN IMMEDIATE")
                 expire_posts(db)
+                sweep_group_chats(db)
                 db.commit()
         db.execute("BEGIN")
         yield db
@@ -196,3 +231,61 @@ def expire_posts(db):
             f"招募「{post['title']}」已到截止时间，自动结束；可延长截止时间重新开放。",
             post["id"],
         )
+
+
+CHAT_COUNTDOWN_DAYS = 7
+CHAT_RETENTION_DAYS = 7
+
+
+def sweep_group_chats(db):
+    """群聊生命周期：招募结束满 7 天遣散转只读；全员删除满 7 天物理清库。
+
+    - 发布者手动解散（dissolved_at 非空）的群聊只转只读、不重置；
+    - 招募到期重开（status 回到 open）时，未解散的群聊恢复可发言；
+    - 保留期（retention_until）内普通成员不可见，仅管理员可查，到期后级联清库。
+    """
+    timestamp = now()
+    # 0) 满员时间：招募结束（ended）时未记录 full_at 的群聊补记（以招募结束时间为准）。
+    db.execute(
+        """UPDATE group_chats SET full_at=(
+               SELECT p.updated_at FROM posts p WHERE p.id=group_chats.post_id
+           )
+           WHERE full_at IS NULL
+             AND post_id IN (SELECT id FROM posts WHERE status='ended' AND updated_at<>'')""",
+    )
+    # 1) 遣散：招募结束（ended）满 7 天且未被发布者解散的群聊转为只读。
+    scattered_cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=CHAT_COUNTDOWN_DAYS)
+    ).isoformat()
+    for chat in db.execute(
+        """SELECT c.id,p.title FROM group_chats c JOIN posts p ON p.id=c.post_id
+           WHERE c.read_only=0 AND c.dissolved_at IS NULL AND c.retention_until IS NULL
+           AND p.status='ended' AND p.updated_at<>'' AND p.updated_at<=?""",
+        (scattered_cutoff,),
+    ).fetchall():
+        db.execute("UPDATE group_chats SET read_only=1 WHERE id=?", (chat["id"],))
+        for member in db.execute(
+            "SELECT user_id FROM chat_members WHERE chat_id=? AND deleted_at IS NULL",
+            (chat["id"],),
+        ).fetchall():
+            notify(
+                db,
+                member["user_id"],
+                f"「{chat['title']}」的群聊已遣散，转为只读；你可删除该群聊。",
+                event_key=f"chat-scattered:{chat['id']}",
+                kind="chat",
+                target_path="/chats",
+            )
+    # 2) 招募到期重开时，未解散的群聊恢复活跃（解除只读）。
+    for chat in db.execute(
+        """SELECT c.id FROM group_chats c JOIN posts p ON p.id=c.post_id
+           WHERE c.read_only=1 AND c.dissolved_at IS NULL AND c.retention_until IS NULL
+           AND p.status='open' AND p.taken_down=0""",
+    ).fetchall():
+        db.execute("UPDATE group_chats SET read_only=0 WHERE id=?", (chat["id"],))
+    # 3) 保留期到期：全员删除满 7 天，物理清库（级联删除成员与消息）。
+    for chat in db.execute(
+        "SELECT id FROM group_chats WHERE retention_until IS NOT NULL AND retention_until<=?",
+        (timestamp,),
+    ).fetchall():
+        db.execute("DELETE FROM group_chats WHERE id=?", (chat["id"],))

@@ -6,9 +6,11 @@ import { ErrorNote, Field, Modal } from './ui';
 export function ReportButton({
   type,
   targetId,
+  triggerClassName,
 }: {
-  type: 'post' | 'user' | 'message';
+  type: 'post' | 'user' | 'message' | 'chat_message';
   targetId: number;
+  triggerClassName?: string;
 }) {
   const { user, toast } = useSession();
   const [open, setOpen] = useState(false);
@@ -19,13 +21,13 @@ export function ReportButton({
   return (
     <>
       <button
-        className="link"
+        className={'link' + (triggerClassName ? ' ' + triggerClassName : '')}
         onClick={() => {
           setOpen(true);
           setError('');
         }}
       >
-        举报{type === 'message' ? '消息' : ''}
+        举报
       </button>
       {open && (
         <Modal title="提交举报" onClose={() => !busy && setOpen(false)}>

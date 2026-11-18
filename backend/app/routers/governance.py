@@ -74,6 +74,18 @@ def create_report(data: ReportCreate, user=Depends(student), db=Depends(get_db))
         if not target:
             raise HTTPException(404, "用户不存在")
         subject_id, summary = target["id"], target["name"]
+    elif data.target_type == "chat_message":
+        message = db.execute(
+            """SELECT m.*,c.post_id AS chat_post_id,p.title AS chat_title FROM chat_messages m
+               JOIN group_chats c ON c.id=m.chat_id JOIN posts p ON p.id=c.post_id
+               WHERE m.id=? AND EXISTS(
+                   SELECT 1 FROM chat_members v WHERE v.chat_id=m.chat_id AND v.user_id=? AND v.deleted_at IS NULL)""",
+            (data.target_id, user["id"]),
+        ).fetchone()
+        if not message:
+            raise HTTPException(404, "消息不存在或不可举报")
+        subject_id, summary = message["sender_id"], f"群聊消息 #{message['id']}（{message['chat_title']}）"
+        post_id = message["chat_post_id"]
     else:
         message = db.execute(
             "SELECT * FROM messages WHERE id=? AND (sender_id=? OR recipient_id=?)",
@@ -153,6 +165,15 @@ def reports(
                 (row["target_id"],),
             ).fetchone()
             item["conversation"] = dict(msg) if msg else None
+        elif row["target_type"] == "chat_message":
+            item["reason"] = "群聊举报说明需完成群聊访问审计后查看"
+            if item["resolution"]:
+                item["resolution"] = "处理详情需完成群聊访问审计后查看"
+            msg = db.execute(
+                "SELECT m.chat_id,m.sender_id,c.post_id,p.title FROM chat_messages m JOIN group_chats c ON c.id=m.chat_id JOIN posts p ON p.id=c.post_id WHERE m.id=?",
+                (row["target_id"],),
+            ).fetchone()
+            item["chat"] = dict(msg) if msg else None
         result.append(item)
     return result
 
@@ -269,8 +290,12 @@ def audited_messages(db, audit, after):
     return [
         dict(r)
         for r in db.execute(
-            """SELECT id,sender_id,recipient_id,body,created_at FROM messages
-        WHERE id>? AND ((sender_id=? AND recipient_id=?) OR (sender_id=? AND recipient_id=?)) ORDER BY id LIMIT 200""",
+            """SELECT m.id,m.sender_id,m.recipient_id,m.body,m.created_at,
+               su.name AS sender_name,ru.name AS recipient_name
+               FROM messages m
+               JOIN users su ON su.id=m.sender_id
+               JOIN users ru ON ru.id=m.recipient_id
+        WHERE m.id>? AND ((m.sender_id=? AND m.recipient_id=?) OR (m.sender_id=? AND m.recipient_id=?)) ORDER BY m.id LIMIT 200""",
             (
                 after,
                 audit["first_user_id"],
@@ -343,8 +368,27 @@ def report_evidence(
     report_id: int, audit_id: int, user=Depends(admin), db=Depends(get_db)
 ):
     report = db.execute(
-        "SELECT * FROM reports WHERE id=? AND target_type='message'", (report_id,)
+        "SELECT * FROM reports WHERE id=? AND target_type IN ('message','chat_message')",
+        (report_id,),
     ).fetchone()
+    if report and report["target_type"] == "chat_message":
+        chat_message = db.execute(
+            "SELECT chat_id,sender_id FROM chat_messages WHERE id=?",
+            (report["target_id"],),
+        ).fetchone()
+        audit = db.execute(
+            "SELECT * FROM chat_access_audits WHERE id=? AND admin_id=?",
+            (audit_id, user["id"]),
+        ).fetchone()
+        if (
+            not report
+            or not chat_message
+            or not audit
+            or audit["expires_at"] <= now()
+            or audit["chat_id"] != chat_message["chat_id"]
+        ):
+            raise HTTPException(403, "需要有效的群聊访问授权")
+        return {"reason": report["reason"], "resolution": report["resolution"]}
     audit = db.execute(
         "SELECT * FROM message_access_audits WHERE id=? AND admin_id=?",
         (audit_id, user["id"]),

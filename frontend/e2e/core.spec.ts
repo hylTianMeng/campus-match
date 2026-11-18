@@ -54,7 +54,7 @@ test('real draft → publish → apply → owner approval → notification', asy
   });
   await expect(owner.getByText(/已上传：/)).toBeVisible();
   await owner.getByRole('button', { name: '手动保存草稿' }).click();
-  await expect(owner.getByRole('status')).toHaveText('草稿已保存');
+  await expect(owner.getByRole('status').filter({ hasText: '草稿已保存' })).toHaveText('草稿已保存');
   await owner.getByRole('link', { name: '草稿箱', exact: true }).click();
   await owner.getByRole('link', { name: '继续编辑' }).click();
   await expect(owner.getByLabel('招募标题 *', { exact: true })).toHaveValue(title);
@@ -85,9 +85,13 @@ test('real draft → publish → apply → owner approval → notification', asy
   await applicant.getByRole('button', { name: '一键参与', exact: true }).click();
   await applicant.getByRole('dialog').getByRole('button', { name: '申请此岗位', exact: true }).click();
   await applicant.getByLabel('申请留言（选填）').fill('我有 React 项目经验。');
-  await applicant.getByLabel('简历 / 作品链接（选填）').fill('https://example.com/portfolio');
+  await applicant.getByRole('button', { name: '添加网页或附件' }).click();
+  await applicant.getByLabel('资料标题 *', { exact: true }).fill('作品链接');
+  await applicant.getByLabel('网页地址 *', { exact: true }).fill('https://example.com/portfolio');
   await applicant.getByRole('button', { name: '提交申请' }).click();
-  await expect(applicant.getByRole('status')).toHaveText('申请已提交，等待审核');
+  await expect(
+    applicant.getByRole('status').filter({ hasText: '申请已提交，等待审核' }),
+  ).toHaveText('申请已提交，等待审核');
   await owner.getByRole('link', { name: '管理申请', exact: true }).first().click();
   await expect(owner.getByText('留言：我有 React 项目经验。', { exact: true })).toBeVisible();
   await owner.getByRole('button', { name: '通过', exact: true }).click();

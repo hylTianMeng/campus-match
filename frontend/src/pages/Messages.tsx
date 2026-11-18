@@ -2,9 +2,12 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, ApiError, useData, write, MESSAGE_POLL_MS, refreshInbox } from '../api';
 import { useSession } from '../context';
-import type { Message, Notice, Person, Post } from '../types';
-import { BlockButton, ReportButton } from '../components/SafetyActions';
+import type { Message, Notice, Person, Post, ChatSummary } from '../types';
+import { BlockButton } from '../components/SafetyActions';
 import { Avatar, Header, Empty, LoadState, ErrorNote, Modal, date } from '../components/ui';
+import { GroupChatView } from '../components/GroupChat';
+import { MessageDotMenu } from '../components/MessageDotMenu';
+import { MessageBody } from '../components/MessageBody';
 
 function NoticeLink({ notice, onRead }: { notice: Notice; onRead: () => void }) {
   const path = notice.target_path || (notice.post_id ? '/detail/' + notice.post_id : '/settings');
@@ -19,7 +22,9 @@ function Notices() {
   const [page, setPage] = useState(0);
   const data = useData<Notice[]>('/notices?limit=50&offset=' + page * 50, MESSAGE_POLL_MS);
   const [busy, setBusy] = useState(false);
+  const [confirmAll, setConfirmAll] = useState(false);
   const { toast } = useSession();
+  const hasUnread = !!data.data?.some((n) => !n.is_read);
   async function mark(id: number) {
     setBusy(true);
     try {
@@ -32,13 +37,44 @@ function Notices() {
       setBusy(false);
     }
   }
+  async function markAll() {
+    setBusy(true);
+    try {
+      await write('/notices/read');
+      setConfirmAll(false);
+      data.refresh();
+      refreshInbox();
+      toast('已全部标为已读');
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <>
-      <div className="chathead">
+      <div className="chathead between">
         <h3>系统通知</h3>
+        {hasUnread && (
+          <div className="actions">
+            <button className="link" disabled={busy} onClick={() => setConfirmAll(true)}>
+              一键已读
+            </button>
+          </div>
+        )}
       </div>
       <LoadState {...data} retry={data.refresh} />
       {data.data?.length === 0 && <Empty title="暂无通知" />}
+      {confirmAll && (
+        <Modal title="一键已读" onClose={() => !busy && setConfirmAll(false)}>
+          <p style={{ margin: '18px 0' }}>
+            将把你的全部系统通知标为已读，此操作不可撤销。确认继续吗？
+          </p>
+          <button className="btn danger" disabled={busy} onClick={() => void markAll()}>
+            确认全部已读
+          </button>
+        </Modal>
+      )}
       <div className="notice-list">
         {data.data?.map((n) => (
           <div className="row" key={n.id}>
@@ -82,31 +118,7 @@ function Notices() {
   );
 }
 
-export function MessageBody({ body }: { body: string }) {
-  return (
-    <>
-      {body.split(/(https?:\/\/[^\s<>]+)/g).map((part, index) => {
-        if (!/^https?:\/\//.test(part)) return part;
-        try {
-          const url = new URL(part);
-          if (url.origin === window.location.origin && url.hash.startsWith('#/detail/'))
-            return (
-              <Link key={index} to={url.hash.slice(1)}>
-                {part}
-              </Link>
-            );
-          return (
-            <a key={index} href={url.href} target="_blank" rel="noopener noreferrer">
-              {part}
-            </a>
-          );
-        } catch {
-          return part;
-        }
-      })}
-    </>
-  );
-}
+export { MessageBody } from '../components/MessageBody';
 interface Conversation {
   peer: Person;
   unread_count: number;
@@ -120,9 +132,21 @@ export function Chats() {
   const [params, setParams] = useSearchParams();
   const showNotices = params.get('view') === 'notices';
   const peerId = showNotices ? 0 : Number(params.get('peer')) || 0;
+  const chatId = showNotices ? 0 : Number(params.get('chat')) || 0;
   const shareId = Number(params.get('share')) || 0;
   const { user, toast, openedPeers, setOpenedPeers } = useSession();
   const conversations = useData<Conversation[]>('/conversations', MESSAGE_POLL_MS, true);
+  const groups = useData<ChatSummary[]>('/chats', MESSAGE_POLL_MS, true);
+  const unread = useData<{ messages: number; notices: number; chats: number }>(
+    '/unread',
+    MESSAGE_POLL_MS,
+    true,
+  );
+  useEffect(() => {
+    const listener = () => unread.refresh();
+    window.addEventListener('inbox-changed', listener);
+    return () => window.removeEventListener('inbox-changed', listener);
+  }, [unread.refresh]);
   const peer = useData<ConversationInfo>(
     peerId ? '/conversations/' + peerId : null,
     MESSAGE_POLL_MS,
@@ -154,7 +178,12 @@ export function Chats() {
   const chatBodyRef = useRef<HTMLDivElement>(null);
   const followLatest = useRef(true);
   const loadMessages = useRef<(reset?: boolean) => Promise<void>>(async () => {});
-  const [confirm, setConfirm] = useState<{ title: string; path: string; method: string }>();
+  const [confirm, setConfirm] = useState<{
+    title: string;
+    message?: string;
+    path: string;
+    method: string;
+  }>();
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState('');
   const drafts = useRef<Record<string, string>>({});
@@ -177,6 +206,15 @@ export function Chats() {
       container.scrollTop = container.scrollHeight;
     }
   }, [messages, loading]);
+  useLayoutEffect(() => {
+    const container = chatBodyRef.current;
+    if (!container) return;
+    const observer = new ResizeObserver(() => {
+      if (followLatest.current) container.scrollTop = container.scrollHeight;
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [peerId, chatId, showNotices]);
   useEffect(() => {
     let active = true;
     let cursor = 0;
@@ -297,7 +335,8 @@ export function Chats() {
       <LoadState {...conversations} retry={conversations.refresh} />
       <div
         className={
-          'panel chat ' + (showNotices ? 'notice-view' : peerId ? 'mobile-thread' : 'mobile-list')
+          'panel chat ' +
+          (showNotices ? 'notice-view' : peerId || chatId ? 'mobile-thread' : 'mobile-list')
         }
       >
         <aside className="conversations" aria-labelledby="conversation-list-title">
@@ -312,7 +351,14 @@ export function Chats() {
             <span className="avatar" aria-hidden="true">
               通
             </span>
-            <h3>系统通知</h3>
+            <div className="grow">
+              <h3>系统通知</h3>
+            </div>
+            {!!unread.data?.notices && (
+              <span className="conversation-unread" aria-label={unread.data.notices + ' 条未读通知'}>
+                {unread.data.notices}
+              </span>
+            )}
           </Link>
           {conversations.data?.map((c) => (
             <Link
@@ -345,10 +391,37 @@ export function Chats() {
               </div>
             </Link>
           ))}
+          {groups.data && groups.data.length > 0 && (
+            <>
+              <h2 className="conversation-list-title">组队群聊</h2>
+              {groups.data.map((g) => (
+                <Link
+                  key={'chat-' + g.id}
+                  className={'row' + (chatId === g.id ? ' active' : '')}
+                  to={'/chats?chat=' + g.id}
+                  aria-current={chatId === g.id ? 'page' : undefined}
+                >
+                  <span className="avatar" aria-hidden="true">
+                    群
+                  </span>
+                  <div className="grow">
+                    <h3>{g.title}</h3>
+                  </div>
+                  {g.unread_count > 0 && (
+                    <span className="conversation-unread" aria-label={g.unread_count + ' 条未读群聊消息'}>
+                      {g.unread_count}
+                    </span>
+                  )}
+                </Link>
+              ))}
+            </>
+          )}
         </aside>
         <section className="chatmain">
           {showNotices ? (
             <Notices />
+          ) : chatId ? (
+            <GroupChatView chatId={chatId} onClose={() => setParams({})} />
           ) : !peerId ? (
             <div className="chat-placeholder">
               <h2>暂无私信消息</h2>
@@ -434,27 +507,22 @@ export function Chats() {
                         <div className="message">
                           <MessageBody body={m.body} />
                         </div>
-                      </div>
-                      {!user!.banned && user!.verified && (
-                        <div className="actions">
-                          <button
-                            className="link"
-                            onClick={() => {
+                        {!user!.banned && user!.verified && (
+                          <MessageDotMenu
+                            targetId={m.id}
+                            reportType={m.sender_id !== user!.id ? 'message' : undefined}
+                            onDelete={() => {
                               setActionError('');
                               setConfirm({
                                 title: '删除消息',
+                                message: '确定要删除这条消息吗？删除后仅你不再可见，对方不受影响。',
                                 path: '/messages/' + m.id,
                                 method: 'DELETE',
                               });
                             }}
-                          >
-                            删除
-                          </button>
-                          {m.sender_id !== user!.id && (
-                            <ReportButton type="message" targetId={m.id} />
-                          )}
-                        </div>
-                      )}
+                          />
+                        )}
+                      </div>
                     </article>
                   );
                 })}
@@ -634,7 +702,8 @@ export function Chats() {
       {confirm && (
         <Modal title={confirm.title} onClose={() => !actionBusy && setConfirm(undefined)}>
           <p style={{ margin: '18px 0' }}>
-            本操作仅影响你的界面，对方仍可查看记录。隐藏的会话在收到新消息后重新出现。
+            {confirm.message ??
+              '本操作仅影响你的界面，对方仍可查看记录。隐藏的会话在收到新消息后重新出现。'}
           </p>
           <ErrorNote error={actionError} />
           <button

@@ -141,3 +141,57 @@ export interface Message {
   body: string;
   created_at: string;
 }
+export interface ChatSummary {
+  id: number;
+  post_id: number;
+  title: string;
+  post_status: 'open' | 'ended';
+  read_only: boolean;
+  dissolved_at: string | null;
+  retention_until: string | null;
+  last_id: number | null;
+  last_body: string | null;
+  last_at: string | null;
+  unread_count: number;
+}
+export interface ChatMember {
+  id: number;
+  name: string;
+  avatar_url?: string | null;
+  is_owner: boolean;
+  role_name?: string;
+  muted: boolean;
+  left: boolean;
+}
+export interface ChatInfo {
+  id: number;
+  post_id: number;
+  title: string;
+  post_status: 'open' | 'ended';
+  owner: { id: number; name: string };
+  created_at: string;
+  full_at: string | null;
+  scatter_at: string | null;
+  dissolved_at: string | null;
+  read_only: boolean;
+  dissolved: boolean;
+  dissolved_by_name: string | null;
+  retention_until: string | null;
+  members: ChatMember[];
+  can_send: boolean;
+  can_delete: boolean;
+  is_owner: boolean;
+  muted?: boolean;
+  last_read_id?: number;
+}
+export interface ChatMessage {
+  id: number;
+  sender_id: number;
+  sender_name: string;
+  body: string;
+  created_at: string;
+}
+export interface AuditedDirectMessage extends Message {
+  sender_name?: string;
+  recipient_name?: string;
+}

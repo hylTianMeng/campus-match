@@ -121,3 +121,38 @@ CREATE TABLE IF NOT EXISTS admin_post_actions(
  reason TEXT NOT NULL DEFAULT '',
  created_at TEXT NOT NULL
 );
+
+-- D 模块扩展：组队成功后的临时群聊。
+-- group_chats 与招募一一对应（首个录取自动创建）；
+-- read_only=1 表示遣散转只读；retention_until 表示全员删除后的保留期截止时间。
+CREATE TABLE IF NOT EXISTS group_chats(
+ id INTEGER PRIMARY KEY, post_id INTEGER NOT NULL UNIQUE REFERENCES posts(id) ON DELETE CASCADE,
+ dissolved_by INTEGER REFERENCES users(id), dissolved_at TEXT,
+ read_only INTEGER NOT NULL DEFAULT 0, retention_until TEXT,
+ full_at TEXT, created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS group_chats_retention ON group_chats(retention_until);
+CREATE TABLE IF NOT EXISTS chat_members(
+ chat_id INTEGER NOT NULL REFERENCES group_chats(id) ON DELETE CASCADE,
+ user_id INTEGER NOT NULL REFERENCES users(id),
+ last_read_id INTEGER NOT NULL DEFAULT 0,
+ muted INTEGER NOT NULL DEFAULT 0,
+ role_name TEXT NOT NULL DEFAULT '',
+ deleted_at TEXT,
+ PRIMARY KEY(chat_id,user_id)
+);
+CREATE INDEX IF NOT EXISTS chat_members_user ON chat_members(user_id);
+CREATE TABLE IF NOT EXISTS chat_message_deletions(
+ chat_id INTEGER NOT NULL REFERENCES group_chats(id) ON DELETE CASCADE,
+ user_id INTEGER NOT NULL REFERENCES users(id),
+ message_id INTEGER NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+ created_at TEXT NOT NULL,
+ PRIMARY KEY(chat_id,user_id,message_id)
+);
+CREATE TABLE IF NOT EXISTS chat_messages(
+ id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL REFERENCES group_chats(id) ON DELETE CASCADE,
+ sender_id INTEGER NOT NULL REFERENCES users(id), body TEXT NOT NULL,
+ client_id TEXT, created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS chat_messages_chat ON chat_messages(chat_id,id);
+CREATE UNIQUE INDEX IF NOT EXISTS chat_message_request_key ON chat_messages(chat_id,sender_id,client_id) WHERE client_id IS NOT NULL;

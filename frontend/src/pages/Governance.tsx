@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, NavLink, useSearchParams } from 'react-router-dom';
 import { api, useData, write, refreshInbox } from '../api';
 import { useSession } from '../context';
-import type { Message, Person } from '../types';
+import type { Message, Person, ChatMessage, AuditedDirectMessage } from '../types';
 import { Header, LoadState, Empty, ErrorNote, Modal, Field, Badge, date } from '../components/ui';
 import { BlockButton } from '../components/SafetyActions';
 import { MessageBody } from './Messages';
@@ -15,6 +15,7 @@ export function AdminNav() {
         ['/admin/posts', '招募管理'],
         ['/admin/reports', '举报管理'],
         ['/admin/messages', '私信管理'],
+        ['/admin/chats', '群聊管理'],
         ['/admin/audits', '访问审计'],
         ['/admin/history', '处罚历史'],
       ].map(([path, label]) => (
@@ -84,7 +85,7 @@ export function BlockList() {
 }
 interface Report {
   id: number;
-  target_type: 'post' | 'user' | 'message';
+  target_type: 'post' | 'user' | 'message' | 'chat_message';
   target_id: number;
   target_summary: string;
   status: string;
@@ -96,6 +97,7 @@ interface Report {
   admin_id?: number;
   resolved_at?: string;
   conversation?: { sender_id: number; recipient_id: number };
+  chat?: { chat_id: number; post_id: number; title: string };
 }
 const statusName: Record<string, string> = {
   pending: '待处理',
@@ -169,6 +171,7 @@ export function ReportAdmin() {
           <option value="post">招募</option>
           <option value="user">用户</option>
           <option value="message">消息</option>
+          <option value="chat_message">群聊消息</option>
         </select>
       </div>
       <LoadState {...data} retry={data.refresh} />
@@ -208,6 +211,14 @@ export function ReportAdmin() {
               }
             >
               填写原因后查看会话证据
+            </Link>
+          )}
+          {r.chat && (
+            <Link
+              className="btn secondary"
+              to={'/admin/chats?chat=' + r.chat.chat_id + '&report=' + r.id}
+            >
+              填写原因后查看群聊证据
             </Link>
           )}
           {r.resolution && (
@@ -430,12 +441,17 @@ export function PrivateMessageAdmin() {
     '/admin/conversations?' +
       new URLSearchParams({ q: query, limit: '50', offset: String(page * 50) }),
   );
-  const [pair, setPair] = useState<{ first_user_id: number; second_user_id: number }>(),
+  const [pair, setPair] = useState<{
+    first_user_id: number;
+    second_user_id: number;
+    first_name?: string;
+    second_name?: string;
+  }>(),
     [reason, setReason] = useState(''),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const [audit, setAudit] = useState<Audit>(),
-    [messages, setMessages] = useState<Message[]>([]),
+    [messages, setMessages] = useState<AuditedDirectMessage[]>([]),
     [hasMore, setHasMore] = useState(false),
     [reportReason, setReportReason] = useState('');
   useEffect(() => {
@@ -495,7 +511,7 @@ export function PrivateMessageAdmin() {
               setError('');
             }}
           >
-            填写原因后查看
+            聊天内容审核
           </button>
         </div>
       ))}
@@ -504,7 +520,8 @@ export function PrivateMessageAdmin() {
       {audit && (
         <div className="panel" style={{ marginTop: 20 }}>
           <h2>
-            已授权会话 #{audit.first_user_id} ↔ #{audit.second_user_id}
+            已授权会话：{pair?.first_name ?? '用户 #' + audit.first_user_id} ↔{' '}
+            {pair?.second_name ?? '用户 #' + audit.second_user_id}
           </h2>
           <p>
             访问审计 #{audit.id} · {audit.reason} · {date(audit.created_at)}
@@ -523,7 +540,8 @@ export function PrivateMessageAdmin() {
           {messages.map((m) => (
             <div className="role" key={m.id}>
               <p>
-                消息 #{m.id} · 用户 #{m.sender_id} → #{m.recipient_id} · {date(m.created_at)}
+                消息 #{m.id} · {m.sender_name ?? '用户 #' + m.sender_id} →{' '}
+                {m.recipient_name ?? '用户 #' + m.recipient_id} · {date(m.created_at)}
               </p>
               <div className="bodycopy">
                 <MessageBody body={m.body} />
@@ -570,7 +588,7 @@ export function PrivateMessageAdmin() {
               setMessages([]);
               setReportReason('');
               try {
-                const result = await write<{ audit: Audit; messages: Message[] }>(
+                const result = await write<{ audit: Audit; messages: AuditedDirectMessage[] }>(
                   '/admin/conversations/access',
                   'POST',
                   {
@@ -600,10 +618,11 @@ export function PrivateMessageAdmin() {
             }}
           >
             <p>
-              会话用户 #{pair.first_user_id} 与 #{pair.second_user_id}
-              。访问原因将追加到只读审计记录。
+              会话用户：{pair.first_name ?? '用户 #' + pair.first_user_id} 与{' '}
+              {pair.second_name ?? '用户 #' + pair.second_user_id}
+              。您的本次访问需要填写原因，并记录本次行为进行留档。
             </p>
-            <Field label="查看原因">
+            <Field label="访问原因*">
               <textarea
                 required
                 maxLength={1000}
@@ -618,6 +637,349 @@ export function PrivateMessageAdmin() {
           </form>
         </Modal>
       )}
+    </>
+  );
+}
+
+interface AdminChat {
+  id: number;
+  post_id: number;
+  title: string;
+  post_status: string;
+  owner_id: number;
+  owner_name: string | null;
+  created_at: string | null;
+  full_at: string | null;
+  dissolved_at: string | null;
+  scatter_at: string | null;
+  members: {
+    id: number;
+    name: string;
+    role_name: string;
+    is_owner: boolean;
+    left: boolean;
+  }[];
+  member_count: number;
+  message_count: number;
+  status: string;
+  retention_until: string | null;
+  updated_at: string | null;
+}
+const chatStatusName: Record<string, string> = {
+  active: '活跃',
+  countdown: '遣散倒计时',
+  read_only: '已遣散（只读）',
+  dissolved: '已解散（只读）',
+  retention: '保留期（全员已删除）',
+};
+/** 距自动遣散的剩余时间，格式 X天X时 / X时X分 / X分钟。 */
+function countdownParts(scatterAt: string): string {
+  const ms = Date.parse(scatterAt) - Date.now();
+  if (!(ms > 0)) return '';
+  const totalMinutes = Math.floor(ms / 60000);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) return `${days}天${hours}时`;
+  if (hours > 0) return `${hours}时${minutes}分`;
+  return `${minutes}分钟`;
+}
+interface ChatAudit extends Audit {
+  chat_id: number;
+  admin_name?: string;
+  chat_title?: string | null;
+}
+export function GroupChatAdmin() {
+  const [params] = useSearchParams(),
+    [q, setQ] = useState(''),
+    [query, setQuery] = useState(''),
+    [page, setPage] = useState(0);
+  const data = useData<AdminChat[]>(
+    '/admin/chats?' + new URLSearchParams({ q: query, limit: '50', offset: String(page * 50) }),
+  );
+  const [selected, setSelected] = useState<AdminChat>(),
+    [reason, setReason] = useState(''),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState('');
+  const [audit, setAudit] = useState<ChatAudit>(),
+    [messages, setMessages] = useState<ChatMessage[]>([]),
+    [hasMore, setHasMore] = useState(false),
+    [reportReason, setReportReason] = useState('');
+  const [dissolveTarget, setDissolveTarget] = useState<AdminChat>(),
+    [dissolveBusy, setDissolveBusy] = useState(false),
+    [dissolveError, setDissolveError] = useState('');
+  const [auditedChat, setAuditedChat] = useState<AdminChat>();
+  const { toast } = useSession();
+  const audits = useData<ChatAudit[]>('/admin/chat-audits?limit=20&offset=0');
+  useEffect(() => {
+    const chatId = Number(params.get('chat'));
+    if (!chatId) return;
+    const row = data.data?.find((c) => c.id === chatId);
+    if (row) {
+      setSelected(row);
+      setReason('');
+      setError('');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params, data.data]);
+  useEffect(() => {
+    if (!audit) return;
+    const timer = setTimeout(
+      () => {
+        setAudit(undefined);
+        setMessages([]);
+        setReportReason('');
+        setError('访问授权已失效，请重新填写原因');
+      },
+      Math.max(0, Date.parse(audit.expires_at) - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [audit]);
+  async function loadEvidence(chatId: number, auditId: number) {
+    const reportId = Number(params.get('report'));
+    if (!reportId) return;
+    try {
+      const evidence = await api<{ reason: string; resolution: string }>(
+        '/admin/reports/' + reportId + '/evidence?audit_id=' + auditId,
+      );
+      setReportReason(
+        evidence.reason + (evidence.resolution ? '\n处理记录：' + evidence.resolution : ''),
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+  return (
+    <>
+      <Header
+        title="群聊管理"
+        sub="查看全部组队群聊的状态；群聊在第一位成员通过招募后创立，在招募结束后满员，并临时维持7天后自动解散。若所有成员进行了群聊删除，该群聊仍可审计查看，7 天后彻底清除记录。"
+      />
+      <form
+        className="search"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setQuery(q);
+          setPage(0);
+        }}
+      >
+        <input aria-label="群聊招募标题" value={q} onChange={(e) => setQ(e.target.value)} />
+        <button className="btn">搜索群聊</button>
+      </form>
+      <LoadState {...data} retry={data.refresh} />
+      {data.data?.length === 0 && <Empty />}
+      {data.data?.map((c) => {
+        const activeMembers = c.members.filter((m) => !m.left);
+        const countdown = c.scatter_at && !c.dissolved_at ? countdownParts(c.scatter_at) : '';
+        return (
+          <div className="row" key={c.id}>
+            <div className="grow">
+              <h3>
+                由 {c.owner_name ?? '用户 #' + c.owner_id} 发起的 “{c.title}”
+              </h3>
+              <p>发布者：{c.owner_name ?? '用户 #' + c.owner_id}</p>
+              <p>成员：{activeMembers.map((m) => m.name).join('、') || '--'}</p>
+              <p>
+                {c.message_count} 条消息
+                {c.updated_at ? ' · 最近消息 ' + date(c.updated_at) : ''}
+              </p>
+              <p>创立时间：{c.created_at ? date(c.created_at) : '--'}</p>
+              <p>满员时间：{c.full_at ? date(c.full_at) : '--'}</p>
+              <p>
+                解散时间：
+                {c.dissolved_at
+                  ? date(c.dissolved_at)
+                  : countdown
+                    ? `--（自动解散倒计时${countdown}）`
+                    : '--'}
+              </p>
+              {c.status !== 'countdown' && <Badge>{chatStatusName[c.status] ?? c.status}</Badge>}
+              {c.retention_until && <p>保留期截止：{date(c.retention_until)}</p>}
+            </div>
+            <button
+              className="btn secondary"
+              onClick={() => {
+                setSelected(c);
+                setReason('');
+                setError('');
+              }}
+            >
+              聊天内容审核
+            </button>
+          </div>
+        );
+      })}
+      <Pager page={page} setPage={setPage} count={data.data?.length} />
+      <ErrorNote error={error} />
+      {audit && (
+        <div className="panel" style={{ marginTop: 20 }}>
+          <h2>
+            已授权群聊：由 {auditedChat?.owner_name ?? '用户 #' + audit.chat_id} 发起的“
+            {auditedChat?.title ?? ''}”
+          </h2>
+          <p>
+            访问审计 #{audit.id} · {audit.reason} · {date(audit.created_at)}
+          </p>
+          <div className="actions" style={{ display: 'flex', gap: 12 }}>
+            <button
+              className="link"
+              onClick={() => {
+                setAudit(undefined);
+                setMessages([]);
+                setReportReason('');
+                setAuditedChat(undefined);
+              }}
+            >
+              关闭正文
+            </button>
+            {auditedChat && auditedChat.status !== 'dissolved' && (
+              <button
+                className="link"
+                style={{ color: '#b3261e' }}
+                onClick={() => {
+                  setDissolveError('');
+                  setDissolveTarget(auditedChat);
+                }}
+              >
+                强制解散群聊
+              </button>
+            )}
+          </div>
+          {reportReason && <p className="bodycopy">举报说明：{reportReason}</p>}
+          {messages.map((m) => (
+            <div className="role" key={m.id}>
+              <p>
+                消息 #{m.id} · {m.sender_name}（#{m.sender_id}） · {date(m.created_at)}
+              </p>
+              <div className="bodycopy">
+                <MessageBody body={m.body} />
+              </div>
+            </div>
+          ))}
+          {hasMore && (
+            <button
+              className="btn secondary"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const rows = await api<ChatMessage[]>(
+                    '/admin/chats/access/' +
+                      audit.id +
+                      '?after=' +
+                      messages[messages.length - 1].id,
+                  );
+                  setMessages((prev) => [...prev, ...rows]);
+                  setHasMore(rows.length === 200);
+                } catch (e) {
+                  setError((e as Error).message);
+                  setAudit(undefined);
+                  setMessages([]);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              加载后续消息
+            </button>
+          )}
+        </div>
+      )}
+      {selected && (
+        <Modal title="群聊访问原因" onClose={() => !busy && setSelected(undefined)}>
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setBusy(true);
+              setError('');
+              setAudit(undefined);
+              setMessages([]);
+              setReportReason('');
+              try {
+                const result = await write<{ audit: ChatAudit; messages: ChatMessage[] }>(
+                  '/admin/chats/' + selected.id + '/access',
+                  'POST',
+                  { reason },
+                );
+                setAudit(result.audit);
+                setMessages(result.messages);
+                setHasMore(result.messages.length === 200);
+                setAuditedChat(selected);
+                setSelected(undefined);
+                void loadEvidence(selected.id, result.audit.id);
+              } catch (e) {
+                setError((e as Error).message);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            <p>
+              由 {selected.owner_name ?? '用户 #' + selected.owner_id} 发起的“{selected.title}”
+              。您的本次访问需要填写原因，并记录本次行为进行留档。
+            </p>
+            <Field label="访问原因*">
+              <textarea
+                required
+                maxLength={1000}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+              />
+            </Field>
+            <ErrorNote error={error} />
+            <button className="btn" disabled={busy}>
+              记录审计并查看
+            </button>
+          </form>
+        </Modal>
+      )}
+      {dissolveTarget && (
+        <Modal title="强制解散群聊" onClose={() => !dissolveBusy && setDissolveTarget(undefined)}>
+          <p style={{ margin: '18px 0' }}>
+            将强制解散“{dissolveTarget.title}”：群聊立即转为只读，所有成员将收到通知。此操作不可撤销。
+          </p>
+          <ErrorNote error={dissolveError} />
+          <button
+            className="btn danger"
+            disabled={dissolveBusy}
+            onClick={async () => {
+              setDissolveBusy(true);
+              setDissolveError('');
+              try {
+                await write('/admin/chats/' + dissolveTarget.id + '/dissolve', 'POST', {});
+                setDissolveTarget(undefined);
+                setAudit(undefined);
+                setMessages([]);
+                setReportReason('');
+                setAuditedChat(undefined);
+                data.refresh();
+                toast('群聊已强制解散');
+              } catch (e) {
+                setDissolveError((e as Error).message);
+              } finally {
+                setDissolveBusy(false);
+              }
+            }}
+          >
+            确认强制解散
+          </button>
+        </Modal>
+      )}
+      <h2 style={{ marginTop: 28 }}>最近的群聊访问审计</h2>
+      <LoadState {...audits} retry={audits.refresh} />
+      {audits.data?.length === 0 && <Empty />}
+      {audits.data?.map((a) => (
+        <div className="row" key={a.id}>
+          <div className="grow">
+            <h3>
+              审计 #{a.id} · 群聊 #{a.chat_id} {a.chat_title ? `（${a.chat_title}）` : ''}
+            </h3>
+            <p>
+              管理员 {a.admin_name} · {a.reason} · {date(a.created_at)}
+            </p>
+          </div>
+        </div>
+      ))}
     </>
   );
 }

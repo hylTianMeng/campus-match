@@ -1834,3 +1834,216 @@ button:disabled {
     flex-basis: 100%;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * 消息"⋯"操作菜单（微信式小浮窗）与群聊侧栏、解散倒计时（第 8 轮）。
+ * ------------------------------------------------------------------------- */
+.msg-dot-root {
+  position: relative;
+  align-self: flex-start;
+}
+.msg-dot-btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-top: 4px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.msg-dot-btn:hover,
+.msg-dot-btn.active,
+.msg-dot-btn[aria-expanded='true'] {
+  background: #eee1f5;
+  color: #735181;
+}
+.msg-dot-btn.head-dots {
+  width: 32px;
+  height: 32px;
+  font-size: 22px;
+  border: 1px solid #eee7f3;
+  background: #f8f4fb;
+}
+.msg-dot-menu {
+  position: absolute;
+  top: 30px;
+  left: 0;
+  z-index: 30;
+  min-width: 108px;
+  background: #fff;
+  border: 1px solid #eee7f3;
+  border-radius: 10px;
+  box-shadow: 0 8px 22px rgba(80, 50, 100, 0.14);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.chat-message.own .msg-dot-menu {
+  left: auto;
+  right: 0;
+}
+.msg-dot-item {
+  display: block;
+  width: 100%;
+  border: none;
+  background: transparent;
+  border-radius: 7px;
+  padding: 7px 12px;
+  text-align: left;
+  font-size: 14px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.msg-dot-item:hover {
+  background: #f6eefb;
+}
+
+/* 标题栏解散倒计时 */
+.chat-countdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #fdf3e3;
+  border: 1px solid #f0dcb8;
+  color: #a4700f;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 群聊侧栏（在聊天面板内从右往左划出，向右划回关闭） */
+.chat {
+  position: relative;
+}
+.chat-drawer-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  background: rgba(40, 24, 52, 0.28);
+}
+.chat-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  width: min(360px, 90%);
+  background: #fff;
+  box-shadow: -12px 0 32px rgba(60, 34, 80, 0.18);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(0);
+  animation: chat-drawer-in 0.22s ease-out;
+}
+.chat-drawer.closing {
+  animation: chat-drawer-out 0.22s ease-in forwards;
+}
+@keyframes chat-drawer-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes chat-drawer-out {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+.chat-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid #f0e8f5;
+}
+.chat-drawer-head h3 {
+  margin: 0;
+}
+.chat-drawer-close {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid #eee7f3;
+  border-radius: 9px;
+  background: #f8f4fb;
+  color: #735181;
+  cursor: pointer;
+}
+.chat-drawer-close svg {
+  width: 18px;
+  height: 18px;
+}
+.chat-drawer-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px;
+}
+.drawer-meta {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.chat-drawer-body h4 {
+  margin: 16px 0 8px;
+  font-size: 14px;
+}
+.chat-drawer-members {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.chat-drawer-members li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px dashed #f0e8f5;
+}
+.chat-drawer-members li:last-child {
+  border-bottom: none;
+}
+.chat-drawer-members .grow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.member-role {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f1eef4;
+  color: #6b6472;
+  white-space: nowrap;
+}
+.member-role.owner {
+  background: #ead9f3;
+  color: #7a4d97;
+}
+.member-muted {
+  font-size: 12px;
+  color: #b3261e;
+}
+.chat-drawer-actions {
+  padding: 14px 16px;
+  border-top: 1px solid #f0e8f5;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.chat-drawer-actions .btn {
+  width: 100%;
+}
