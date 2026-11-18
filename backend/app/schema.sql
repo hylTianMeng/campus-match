@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS applications(
  role_id INTEGER NOT NULL REFERENCES roles(id), user_id INTEGER NOT NULL REFERENCES users(id),
  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','accepted','rejected','withdrawn','expired')),
  message TEXT NOT NULL DEFAULT '', experience TEXT NOT NULL DEFAULT '', portfolio TEXT NOT NULL DEFAULT '',
+ resources TEXT NOT NULL DEFAULT '[]',
  reason TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS one_pending_role ON applications(role_id,user_id) WHERE status='pending';
@@ -67,6 +68,14 @@ CREATE TABLE IF NOT EXISTS profile_attachments(
  created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS profile_attachments_owner ON profile_attachments(owner_id);
+CREATE TABLE IF NOT EXISTS application_attachments(
+ id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id INTEGER NOT NULL REFERENCES users(id),
+ application_id INTEGER REFERENCES applications(id) ON DELETE CASCADE,
+ filename TEXT NOT NULL, content_type TEXT NOT NULL, content BLOB NOT NULL,
+ created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS application_attachments_owner ON application_attachments(owner_id);
+CREATE INDEX IF NOT EXISTS application_attachments_application ON application_attachments(application_id);
 CREATE TABLE IF NOT EXISTS favorites(
  user_id INTEGER NOT NULL REFERENCES users(id), post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
  PRIMARY KEY(user_id,post_id)

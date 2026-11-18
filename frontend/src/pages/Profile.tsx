@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { uploadAvatar, removeAvatar, write } from '../api';
 import { useSession } from '../context';
-import type { User, ProfileResource } from '../types';
-import { ProfileResources } from '../components/ProfileResources';
+import type { User, ResourceItem } from '../types';
+import { ResourceEditor } from '../components/ResourceEditor';
 import { Header, Field, ErrorNote, Modal, Avatar, tagsFrom } from '../components/ui';
 export function Profile({ settings = false }: { settings?: boolean }) {
   const { user, setUser, toast } = useSession();
@@ -15,7 +15,7 @@ export function Profile({ settings = false }: { settings?: boolean }) {
     dept: '',
     year: '',
     bio: '',
-    resources: [] as ProfileResource[],
+    resources: [] as ResourceItem[],
     tags: [] as string[],
     searchable: true,
     public_posts: true,
@@ -212,7 +212,8 @@ export function Profile({ settings = false }: { settings?: boolean }) {
                 onChange={(e) => setForm({ ...form, bio: e.target.value })}
               />
             </Field>
-            <ProfileResources
+            <ResourceEditor
+              purpose="profile"
               key={user!.id}
               value={form.resources}
               onChange={(resources) => setForm((current) => ({ ...current, resources }))}

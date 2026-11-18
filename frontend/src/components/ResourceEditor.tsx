@@ -1,16 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { write } from '../api';
-import type { ProfileResource } from '../types';
+import type { ResourceItem } from '../types';
 import { ErrorNote, Field } from './ui';
 
-export function ProfileResources({
+export function ResourceEditor({
+  purpose,
   value,
   onChange,
   busy,
   onUploading,
 }: {
-  value: ProfileResource[];
-  onChange: (items: ProfileResource[]) => void;
+  purpose: 'profile' | 'application';
+  value: ResourceItem[];
+  onChange: (items: ResourceItem[]) => void;
   busy: boolean;
   onUploading: (uploading: boolean) => void;
 }) {
@@ -23,7 +25,7 @@ export function ProfileResources({
       active.current = false;
     };
   }, []);
-  function update(index: number, patch: Partial<ProfileResource>) {
+  function update(index: number, patch: Partial<ResourceItem>) {
     onChange(value.map((item, i) => (i === index ? { ...item, ...patch } : item)));
   }
   async function upload(file: File, index: number) {
@@ -43,7 +45,7 @@ export function ProfileResources({
       });
       if (!active.current) return;
       const uploaded = await write<{ id: number; filename: string }>(
-        '/auth/me/attachments',
+        purpose === 'profile' ? '/auth/me/attachments' : '/application-attachments',
         'POST',
         {
           filename: file.name,
@@ -65,7 +67,9 @@ export function ProfileResources({
     <>
       <h2>网页与附件（选填）</h2>
       <p className="small muted">
-        可添加个人主页、作品集或介绍附件。保存后将在对外主页展示，供已完成校园认证的同学查看和下载。
+        {purpose === 'profile'
+          ? '可添加个人主页、作品集或介绍附件。保存后将在对外主页展示，供已完成校园认证的同学查看和下载。'
+          : '可添加个人主页、作品集或简历附件。随申请提交，仅本人和本次招募发布者可查看和下载。'}
       </p>
       <fieldset
         disabled={busy || uploading}
@@ -97,7 +101,7 @@ export function ProfileResources({
                 value={item.type}
                 onChange={(e) =>
                   update(index, {
-                    type: e.target.value as ProfileResource['type'],
+                    type: e.target.value as ResourceItem['type'],
                     content: '',
                     attachment_id: null,
                     filename: undefined,
@@ -149,7 +153,8 @@ export function ProfileResources({
         </button>
       </fieldset>
       <p className="small muted">
-        最多 20 项；附件支持 PDF、DOCX、PNG、JPG、TXT，每个最多 5 MB。移除后需保存生效。
+        最多 20 项；附件支持 PDF、DOCX、PNG、JPG、TXT，每个最多 5 MB。
+        {purpose === 'profile' ? '移除后需保存生效。' : '提交申请后保存在本次申请记录中。'}
       </p>
       {uploading && (
         <p className="small" role="status">

@@ -2,7 +2,7 @@ import { ReportButton, BlockButton } from '../components/SafetyActions';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useData } from '../api';
-import type { Person, Post, ProfileResource } from '../types';
+import type { Person, Post, ResourceItem } from '../types';
 import { useSession } from '../context';
 import { Header, Tags, LoadState, Empty, Badge, Avatar, SafeLink } from '../components/ui';
 import { PostCard } from '../components/PostCard';
@@ -81,7 +81,7 @@ export function People() {
   );
 }
 interface PublicProfile extends Person {
-  resources: ProfileResource[];
+  resources: ResourceItem[];
   public_posts: boolean;
   public_teams: boolean;
   posts: Post[] | null;

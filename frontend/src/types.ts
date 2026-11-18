@@ -8,7 +8,7 @@ export interface Person {
   avatar_url?: string | null;
 }
 export interface User extends Person {
-  resources?: ProfileResource[];
+  resources?: ResourceItem[];
   email: string;
   verified: boolean;
   banned: boolean;
@@ -34,7 +34,7 @@ export interface InformationItem {
   content: string;
   attachment_id: number | null;
 }
-export interface ProfileResource extends Omit<InformationItem, 'type'> {
+export interface ResourceItem extends Omit<InformationItem, 'type'> {
   type: 'link' | 'attachment';
   filename?: string;
 }
@@ -74,6 +74,7 @@ export interface Post {
   is_favorite: boolean;
 }
 export interface Application {
+  resources: ResourceItem[];
   id: number;
   post_id: number;
   role_id: number;

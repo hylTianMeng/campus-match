@@ -232,6 +232,7 @@ def delete_account(
         (AVATAR_DIR / user["avatar_path"]).unlink(missing_ok=True)
     db.execute("UPDATE users SET resources='[]' WHERE id=?", (user["id"],))
     db.execute("DELETE FROM profile_attachments WHERE owner_id=?", (user["id"],))
+    db.execute("DELETE FROM application_attachments WHERE owner_id=? AND application_id IS NULL", (user["id"],))
     db.execute("DELETE FROM sessions WHERE user_id=?", (user["id"],))
     response.delete_cookie("campus_session", path="/")
     return {"ok": True}

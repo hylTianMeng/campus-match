@@ -471,8 +471,22 @@ def apply(
     ).fetchone()[0]
     if count >= role["capacity"]:
         raise HTTPException(409, "岗位已满")
+    resources = []
+    attachment_ids = set()
+    for item in data.resources:
+        resource = item.model_dump()
+        if item.type == "attachment":
+            row = db.execute(
+                "SELECT filename FROM application_attachments WHERE id=? AND owner_id=? AND application_id IS NULL",
+                (item.attachment_id, user["id"]),
+            ).fetchone()
+            if not row or item.attachment_id in attachment_ids:
+                raise HTTPException(422, "附件不存在、无权使用或已用于其他申请")
+            attachment_ids.add(item.attachment_id)
+            resource["filename"] = row["filename"]
+        resources.append(resource)
     app_id = db.execute(
-        "INSERT INTO applications(post_id,role_id,user_id,message,experience,portfolio,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+        "INSERT INTO applications(post_id,role_id,user_id,message,experience,portfolio,resources,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
         (
             post_id,
             role["id"],
@@ -480,10 +494,13 @@ def apply(
             data.message,
             data.experience,
             data.portfolio,
+            json.dumps(resources, ensure_ascii=False),
             now(),
             now(),
         ),
     ).lastrowid
+    for attachment_id in attachment_ids:
+        db.execute("UPDATE application_attachments SET application_id=? WHERE id=?", (app_id, attachment_id))
     db.execute(
         "INSERT INTO application_events(application_id,actor_id,status,reason,created_at) VALUES(?,?,?,?,?)",
         (app_id, user["id"], "pending", "提交申请", now()),
@@ -505,6 +522,7 @@ def application_rows(db, where, args):
     return [
         {
             **dict(row),
+            "resources": json.loads(row["resources"]),
             "reapply_banned": bool(
                 db.execute(
                     "SELECT 1 FROM application_bans WHERE post_id=? AND user_id=?",
@@ -532,6 +550,40 @@ def applicants(post_id: int, user=Depends(current_user), db=Depends(get_db_reado
 @router.get("/me/applications")
 def my_applications(user=Depends(current_user), db=Depends(get_db_readonly)):
     return application_rows(db, "a.user_id=?", (user["id"],))
+
+
+@router.post("/application-attachments", status_code=201)
+def upload_application_attachment(data: AttachmentUpload, user=Depends(student), db=Depends(get_db)):
+    filename, content_type, content = decode_attachment(data)
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    db.execute(
+        "DELETE FROM application_attachments WHERE owner_id=? AND application_id IS NULL AND created_at<?",
+        (user["id"], cutoff),
+    )
+    attachment_id = db.execute(
+        "INSERT INTO application_attachments(owner_id,filename,content_type,content,created_at) VALUES(?,?,?,?,?)",
+        (user["id"], filename, content_type, content, now()),
+    ).lastrowid
+    return {"id": attachment_id, "filename": filename, "size": len(content)}
+
+
+@router.get("/applications/{app_id}/attachments/{attachment_id}")
+def download_application_attachment(app_id: int, attachment_id: int, user=Depends(current_user), db=Depends(get_db_readonly)):
+    application = db.execute(
+        "SELECT a.user_id,p.owner_id FROM applications a JOIN posts p ON p.id=a.post_id WHERE a.id=?", (app_id,)
+    ).fetchone()
+    if not application or user["id"] not in (application["user_id"], application["owner_id"]):
+        raise HTTPException(404, "附件不存在")
+    row = db.execute(
+        "SELECT filename,content FROM application_attachments WHERE application_id=? AND id=?", (app_id, attachment_id)
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "附件不存在")
+    return Response(content=row["content"], media_type="application/octet-stream", headers={
+        "Content-Disposition": "attachment; filename*=UTF-8''" + quote(row["filename"]),
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "no-store",
+    })
 
 
 @router.post("/applications/{app_id}/decision")

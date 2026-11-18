@@ -434,9 +434,32 @@ export function Applications({ team = false }: { team?: boolean }) {
           {a.portfolio ? (
             <SafeLink url={a.portfolio}>简历 / 作品</SafeLink>
           ) : (
-            <p className="bodycopy">简历 / 作品：无</p>
+            !a.resources?.length && <p className="bodycopy">简历 / 作品：无</p>
           )}
           {a.reason && <p className="small muted">{a.reason}</p>}
+          {!!a.resources?.length && (
+            <div style={{ marginTop: 16 }}>
+              <h4>网页与附件</h4>
+              {a.resources.map((item, index) => (
+                <div className="roleform" key={index}>
+                  <strong>{item.title}</strong>
+                  <div>
+                    {item.type === 'link' ? (
+                      <SafeLink url={item.content}>{item.content}</SafeLink>
+                    ) : (
+                      <a
+                        className="link"
+                        href={`/api/applications/${a.id}/attachments/${item.attachment_id}`}
+                        download
+                      >
+                        {item.filename || '下载附件'}
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           {owner && a.status === 'withdrawn' && (
             <div className="actions" style={{ marginTop: 12 }}>
               <button

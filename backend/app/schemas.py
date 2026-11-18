@@ -82,7 +82,7 @@ class InformationItem(Input):
         return self
 
 
-class ProfileResource(InformationItem):
+class ResourceItem(InformationItem):
     type: Literal["link", "attachment"]
 
 
@@ -95,7 +95,7 @@ class Profile(Input):
     searchable: bool = True
     public_posts: bool = True
     public_teams: bool = False
-    resources: Optional[List[ProfileResource]] = Field(default=None, max_length=20)
+    resources: Optional[List[ResourceItem]] = Field(default=None, max_length=20)
 
     @field_validator("tags")
     @classmethod
@@ -169,6 +169,7 @@ class ApplicationCreate(Input):
     message: str = Field(default="", max_length=2000)
     experience: str = Field(default="", max_length=3000)
     portfolio: str = Field(default="", max_length=2000)
+    resources: List[ResourceItem] = Field(default_factory=list, max_length=20)
 
     @field_validator("portfolio")
     @classmethod

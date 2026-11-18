@@ -1,10 +1,22 @@
 import { ReportButton, BlockButton } from '../components/SafetyActions';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useData, write } from '../api';
 import { useSession } from '../context';
-import type { Post, Role } from '../types';
-import { Badge, Tags, LoadState, Modal, Field, ErrorNote, SafeLink, date, Avatar, LoginPromptModal } from '../components/ui';
+import type { Post, Role, ResourceItem } from '../types';
+import { ResourceEditor } from '../components/ResourceEditor';
+import {
+  Badge,
+  Tags,
+  LoadState,
+  Modal,
+  Field,
+  ErrorNote,
+  SafeLink,
+  date,
+  Avatar,
+  LoginPromptModal,
+} from '../components/ui';
 const extras = [
   ['contact', '招募者联系方式'],
   ['eventIntro', '赛事 / 活动介绍'],
@@ -24,6 +36,18 @@ export function Detail() {
   const [message, setMessage] = useState(''),
     [experience, setExperience] = useState(''),
     [portfolio, setPortfolio] = useState('');
+  const [resources, setResources] = useState<ResourceItem[]>([]);
+  const [uploading, setUploading] = useState(false);
+  useEffect(() => {
+    setJoin(false);
+    setRole(undefined);
+    setMessage('');
+    setExperience('');
+    setPortfolio('');
+    setResources([]);
+    setUploading(false);
+    setError('');
+  }, [user?.id, id]);
   const [loginAsk, setLoginAsk] = useState(false),
     [favState, setFavState] = useState<boolean | null>(null),
     [adminReason, setAdminReason] = useState('');
@@ -329,13 +353,16 @@ export function Detail() {
         <Modal
           title={'一键参与 · ' + post.title}
           onClose={() => {
+            setUploading(false);
             setJoin(false);
             setRole(undefined);
             setError('');
           }}
         >
           {post.roles.length === 0 ? (
-            <div className="notice">该招募未设置岗位（通知 / 问卷类内容），暂不接受申请，可通过私信与发布者沟通。</div>
+            <div className="notice">
+              该招募未设置岗位（通知 / 问卷类内容），暂不接受申请，可通过私信与发布者沟通。
+            </div>
           ) : !role ? (
             <>
               <div className="notice">选择一个岗位提交申请；不同岗位可分别申请。</div>
@@ -344,9 +371,11 @@ export function Detail() {
                   <div className="between">
                     <h3>{r.name}</h3>
                     <Badge>
-                      {r.accepting === false ? '已停止接收申请' : r.accepted >= r.capacity
-                        ? '岗位已满'
-                        : '剩余 ' + (r.capacity - r.accepted) + ' 名'}
+                      {r.accepting === false
+                        ? '已停止接收申请'
+                        : r.accepted >= r.capacity
+                          ? '岗位已满'
+                          : '剩余 ' + (r.capacity - r.accepted) + ' 名'}
                     </Badge>
                   </div>
                   <p>{r.description}</p>
@@ -360,7 +389,12 @@ export function Detail() {
                     </span>
                     <button
                       className="btn"
-                      disabled={ended || post.interaction_paused || r.accepting === false || r.accepted >= r.capacity}
+                      disabled={
+                        ended ||
+                        post.interaction_paused ||
+                        r.accepting === false ||
+                        r.accepted >= r.capacity
+                      }
                       onClick={() => setRole(r)}
                     >
                       申请此岗位
@@ -373,6 +407,7 @@ export function Detail() {
             <form
               onSubmit={async (e) => {
                 e.preventDefault();
+                if (uploading || busy) return;
                 setBusy(true);
                 setError('');
                 try {
@@ -381,12 +416,14 @@ export function Detail() {
                     message,
                     experience,
                     portfolio,
+                    resources: resources.map(({ filename: _filename, ...item }) => item),
                   });
                   setJoin(false);
                   setRole(undefined);
                   setMessage('');
                   setExperience('');
                   setPortfolio('');
+                  setResources([]);
                   toast('申请已提交，等待审核');
                   data.refresh();
                 } catch (e) {
@@ -420,17 +457,25 @@ export function Detail() {
                 />
               </Field>
               <p className="small muted">补充资料仅本人和招募发布者可见。</p>
+              <ResourceEditor
+                key={`${user?.id}:${id}`}
+                purpose="application"
+                value={resources}
+                onChange={setResources}
+                busy={busy}
+                onUploading={setUploading}
+              />
               <ErrorNote error={error} />
               <div className="actions" style={{ marginTop: 20 }}>
                 <button
                   type="button"
                   className="btn secondary"
-                  disabled={busy}
+                  disabled={busy || uploading}
                   onClick={() => setRole(undefined)}
                 >
                   返回岗位
                 </button>
-                <button className="btn" disabled={busy}>
+                <button className="btn" disabled={busy || uploading}>
                   {busy ? '提交中…' : '提交申请'}
                 </button>
               </div>

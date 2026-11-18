@@ -79,6 +79,7 @@ def init_db():
             migrate(db)
             additions = {
                 "posts": {"taken_down": "INTEGER NOT NULL DEFAULT 0"},
+                "applications": {"resources": "TEXT NOT NULL DEFAULT '[]'"},
                 "messages": {"client_id": "TEXT"},
                 "notices": {"event_key": "TEXT", "kind": "TEXT NOT NULL DEFAULT 'business'",
                             "target_path": "TEXT NOT NULL DEFAULT ''"},
