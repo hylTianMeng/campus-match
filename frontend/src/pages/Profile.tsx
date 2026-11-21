@@ -53,6 +53,12 @@ export function Profile({ settings = false }: { settings?: boolean }) {
   const [delPassword, setDelPassword] = useState('');
   const [delBusy, setDelBusy] = useState(false);
   const [delError, setDelError] = useState('');
+  const [changing, setChanging] = useState(false);
+  const [curPassword, setCurPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [pwdBusy, setPwdBusy] = useState(false);
+  const [pwdError, setPwdError] = useState('');
   return (
     <>
       <Header
@@ -230,6 +236,23 @@ export function Profile({ settings = false }: { settings?: boolean }) {
       {settings && (
         <>
           <div className="panel">
+            <h2>修改密码</h2>
+            <p style={{ marginBottom: 16 }}>修改后，其他已登录设备将自动退出，当前设备保持登录。</p>
+            <button
+              className="btn secondary"
+              disabled={busy}
+              onClick={() => {
+                setCurPassword('');
+                setNewPassword('');
+                setConfirmPassword('');
+                setPwdError('');
+                setChanging(true);
+              }}
+            >
+              修改密码
+            </button>
+          </div>
+          <div className="panel">
             <h2>注销账号</h2>
             <p style={{ marginBottom: 16 }}>
               注销后将匿名化账号资料并使登录失效。已发送消息、申请历史和治理记录会继续保留，供相关参与者回看及必要核查。
@@ -247,6 +270,79 @@ export function Profile({ settings = false }: { settings?: boolean }) {
             </button>
           </div>
         </>
+      )}
+      {changing && (
+        <Modal title="修改密码" onClose={() => !pwdBusy && setChanging(false)}>
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (newPassword !== confirmPassword) {
+                setPwdError('两次输入的新密码不一致');
+                return;
+              }
+              setPwdBusy(true);
+              setPwdError('');
+              try {
+                await write('/auth/password', 'POST', {
+                  current_password: curPassword,
+                  new_password: newPassword,
+                });
+                setChanging(false);
+                toast('密码已修改');
+              } catch (e) {
+                setPwdError((e as Error).message);
+              } finally {
+                setPwdBusy(false);
+              }
+            }}
+          >
+            <Field label="当前密码">
+              <input
+                type="password"
+                autoComplete="current-password"
+                required
+                value={curPassword}
+                onChange={(e) => setCurPassword(e.target.value)}
+              />
+            </Field>
+            <Field label="新密码（至少 8 位）">
+              <input
+                type="password"
+                autoComplete="new-password"
+                required
+                minLength={8}
+                maxLength={200}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+              />
+            </Field>
+            <Field label="确认新密码">
+              <input
+                type="password"
+                autoComplete="new-password"
+                required
+                minLength={8}
+                maxLength={200}
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+              />
+            </Field>
+            <ErrorNote error={pwdError} />
+            <div className="actions">
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={pwdBusy}
+                onClick={() => setChanging(false)}
+              >
+                取消
+              </button>
+              <button className="btn" disabled={pwdBusy}>
+                {pwdBusy ? '修改中…' : '确认修改'}
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
       {deleting && (
         <Modal title="确认注销账号" onClose={() => !delBusy && setDeleting(false)}>
