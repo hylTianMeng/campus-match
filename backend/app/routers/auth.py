@@ -12,7 +12,7 @@ from ..auth import (
     verify_password,
     token_hash,
 )
-from ..schemas import Login, Profile, AttachmentUpload
+from ..schemas import Login, Profile, ChangePassword, AttachmentUpload
 from ..attachments import decode_attachment
 
 router = APIRouter(prefix="/api/auth", tags=["账户"])
@@ -81,6 +81,32 @@ def logout(request: Request, response: Response, db=Depends(get_db)):
 @router.get("/me")
 def me(user=Depends(current_user)):
     return own_user(user)
+
+
+@router.post("/password")
+def change_password(
+    data: ChangePassword,
+    request: Request,
+    user=Depends(current_user),
+    db=Depends(get_db),
+):
+    """修改登录密码：校验旧密码，更新为新密码，并使其他设备的会话失效。
+
+    保留当前会话（当前设备继续登录），删除该用户其他所有 session，防止旧密码
+    泄露后其他已登录设备仍可继续操作。
+    """
+    if not verify_password(data.current_password, user["password_hash"]):
+        raise HTTPException(401, "当前密码错误")
+    db.execute(
+        "UPDATE users SET password_hash=? WHERE id=?",
+        (hash_password(data.new_password), user["id"]),
+    )
+    current_token_hash = token_hash(request.cookies.get("campus_session", ""))
+    db.execute(
+        "DELETE FROM sessions WHERE user_id=? AND token_hash<>?",
+        (user["id"], current_token_hash),
+    )
+    return {"ok": True}
 
 
 @router.patch("/me")
